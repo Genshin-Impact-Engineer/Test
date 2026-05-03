@@ -101,6 +101,7 @@ int main(void)
   OLED_Init();
   OLED_Clear();
   Sensor_Init();
+  /* BEEP: TIM2_CH1 PWM off by default, call HAL_TIM_PWM_Start/Stop to control */
   /* USER CODE END 2 */
 
   /* Infinite loop */
@@ -113,10 +114,25 @@ int main(void)
     Sensor_Update();
     float w = Sensor_GetWeight();
 
+    /* newlib-nano 不支持 %f，手动拆为整数+小数 */
+    if (w < 0.0005f) w = 0.0f;  /* 钳位零值 */
+    int w_scaled = (int)(w * 1000.0f + 0.5f);
+    int w_kg = w_scaled / 1000;
+    int w_g  = w_scaled % 1000;
+
     char buf[16];
-    snprintf(buf, sizeof(buf), "W:%7.3f kg", w);
+    snprintf(buf, sizeof(buf), "W: %d.%03d kg", w_kg, w_g);
     OLED_ClearLine(0, 2);
     OLED_PrintString(0, 2, buf);
+
+    /* 蜂鸣器每 3s 短鸣一次 */
+    static uint32_t last_beep = 0;
+    if (HAL_GetTick() - last_beep >= 3000) {
+        last_beep = HAL_GetTick();
+        HAL_TIM_PWM_Start(&htim2, TIM_CHANNEL_1);
+        HAL_Delay(50);
+        HAL_TIM_PWM_Stop(&htim2, TIM_CHANNEL_1);
+    }
 
     HAL_Delay(10);
   }

@@ -9,12 +9,16 @@
 #define HX711_DOUT_PIN    GPIO_PIN_7
 #define HX711_DOUT_PORT   GPIOA
 
-/* 一阶滞后滤波系数 (设计方案 4.3 节) */
-#define FILTER_ALPHA      0.3f
+/* 自适应一阶滞后滤波: 变化时快速跟踪，稳定时强力平滑 */
+#define FILTER_ALPHA_FAST   0.5f
+#define FILTER_ALPHA_SLOW   0.1f
 
-/* 标定参数（需根据实际传感器标定） */
-#define DEFAULT_ZERO_OFFSET    0L
-#define DEFAULT_SCALE_FACTOR   0.001f
+/* 输出死区 (kg): 变化小于此值不更新，抑制尾数跳变 */
+#define OUTPUT_DEADBAND     0.002f
+
+/* 标定系数: 0.00000236 × 0.213kg / 0.188kg(显示)
+ * 交叉验证: 15g→0.014kg(实际0.015), 误差1g */
+#define DEFAULT_SCALE_FACTOR   0.00000267f
 
 void  Sensor_Init(void);
 void  Sensor_Update(void);
