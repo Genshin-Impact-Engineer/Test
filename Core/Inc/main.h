@@ -31,7 +31,7 @@ extern "C" {
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
-
+#include "sensor.h"
 /* USER CODE END Includes */
 
 /* Exported types ------------------------------------------------------------*/
@@ -59,7 +59,8 @@ void Error_Handler(void);
 /* Private defines -----------------------------------------------------------*/
 
 /* USER CODE BEGIN Private defines */
-
+/* 全局系统滴答计数器（ms），在 TIM3 更新中断中递增，所有模块据此计时 */
+extern volatile uint32_t sys_tick_ms;
 /* USER CODE END Private defines */
 
 #ifdef __cplusplus

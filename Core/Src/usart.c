@@ -73,7 +73,7 @@ void MX_USART2_UART_Init(void)
 
   /* USER CODE END USART2_Init 1 */
   huart2.Instance = USART2;
-  huart2.Init.BaudRate = 115200;
+  huart2.Init.BaudRate = 9600;
   huart2.Init.WordLength = UART_WORDLENGTH_8B;
   huart2.Init.StopBits = UART_STOPBITS_1;
   huart2.Init.Parity = UART_PARITY_NONE;
@@ -154,7 +154,26 @@ void HAL_UART_MspInit(UART_HandleTypeDef* uartHandle)
     HAL_NVIC_SetPriority(USART1_IRQn, 0, 0);
     HAL_NVIC_EnableIRQ(USART1_IRQn);
   /* USER CODE BEGIN USART1_MspInit 1 */
-
+    /*
+     * 关键修复：USART1 TX DMA 模式覆盖
+     *
+     * CubeMX 生成的初始化代码将 TX DMA 模式设置为 DMA_CIRCULAR（循环模式），
+     * 但我们的应用程序使用 HAL_UART_Transmit_DMA() 进行一次性发送
+     * （每次发送一个 JSON 字符串，发送完成后停止）。
+     *
+     * CIRCULAR 模式下：
+     *   - DMA 传输完成后不会自动停止
+     *   - 第二次调用 HAL_UART_Transmit_DMA() 时，DMA 仍在运行，
+     *     导致新数据无法加载，发送卡死
+     *
+     * 修复：覆盖为 DMA_NORMAL 模式
+     *   - 每次传输完成后 DMA 通道自动停止
+     *   - 下次调用 HAL_UART_Transmit_DMA() 时正常启动
+     *
+     * 同理，USART2 TX 见下方 USART2_MspInit 1 的相同修复
+     */
+    hdma_usart1_tx.Init.Mode = DMA_NORMAL;
+    HAL_DMA_Init(&hdma_usart1_tx);
   /* USER CODE END USART1_MspInit 1 */
   }
   else if(uartHandle->Instance==USART2)
@@ -217,7 +236,14 @@ void HAL_UART_MspInit(UART_HandleTypeDef* uartHandle)
     HAL_NVIC_SetPriority(USART2_IRQn, 0, 0);
     HAL_NVIC_EnableIRQ(USART2_IRQn);
   /* USER CODE BEGIN USART2_MspInit 1 */
-
+    /*
+     * 关键修复：USART2 TX DMA 模式覆盖
+     * USART2 用于驱动语音模块（报警语音播报），也是一次性发送
+     * 原因同 USART1 TX：CubeMX 生成的 CIRCULAR 模式与一次性发送不兼容
+     * 详见上方 USART1_MspInit 1 的详细解释
+     */
+    hdma_usart2_tx.Init.Mode = DMA_NORMAL;
+    HAL_DMA_Init(&hdma_usart2_tx);
   /* USER CODE END USART2_MspInit 1 */
   }
 }

@@ -15,6 +15,7 @@ set(MX_Include_Dirs
     ${CMAKE_CURRENT_SOURCE_DIR}/../../Drivers/STM32F1xx_HAL_Driver/Inc/Legacy
     ${CMAKE_CURRENT_SOURCE_DIR}/../../Drivers/CMSIS/Device/ST/STM32F1xx/Include
     ${CMAKE_CURRENT_SOURCE_DIR}/../../Drivers/CMSIS/Include
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../Drivers/Logic/OLED_Dshan
 )
 
 # STM32CubeMX generated application sources
@@ -30,7 +31,14 @@ set(MX_Application_Src
     ${CMAKE_CURRENT_SOURCE_DIR}/../../Core/Src/stm32f1xx_hal_msp.c
     ${CMAKE_CURRENT_SOURCE_DIR}/../../Core/Src/sysmem.c
     ${CMAKE_CURRENT_SOURCE_DIR}/../../Core/Src/syscalls.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../Core/Src/sensor.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../Core/Src/key.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../Core/Src/stepper.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../Core/Src/oled.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../Core/Src/alarm.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../Core/Src/bluetooth.c
     ${CMAKE_CURRENT_SOURCE_DIR}/../../startup_stm32f103xb.s
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../Drivers/Logic/OLED_Dshan/driver_oled.c
 )
 
 # STM32 HAL/LL Drivers
