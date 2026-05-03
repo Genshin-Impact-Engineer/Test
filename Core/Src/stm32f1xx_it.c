@@ -22,6 +22,7 @@
 #include "stm32f1xx_it.h"
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
+#include "key.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -63,7 +64,9 @@ extern DMA_HandleTypeDef hdma_usart2_rx;
 extern UART_HandleTypeDef huart1;
 extern UART_HandleTypeDef huart2;
 /* USER CODE BEGIN EV */
-
+volatile uint32_t sys_tick_ms;
+volatile uint8_t  task_flag_10ms;
+volatile uint8_t  task_flag_100ms;
 /* USER CODE END EV */
 
 /******************************************************************************/
@@ -193,7 +196,12 @@ void SysTick_Handler(void)
   /* USER CODE END SysTick_IRQn 0 */
   HAL_IncTick();
   /* USER CODE BEGIN SysTick_IRQn 1 */
-
+  sys_tick_ms++;
+  {
+      static uint8_t div10 = 0, div100 = 0;
+      if (++div10 >= 10) { div10 = 0; task_flag_10ms  = 1; }
+      if (++div100 >= 100) { div100 = 0; task_flag_100ms = 1; }
+  }
   /* USER CODE END SysTick_IRQn 1 */
 }
 
@@ -320,5 +328,14 @@ void EXTI15_10_IRQHandler(void)
 }
 
 /* USER CODE BEGIN 1 */
-
+void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin)
+{
+    switch (GPIO_Pin) {
+        case GPIO_PIN_12: Key_ISR(KEY_K1); break;
+        case GPIO_PIN_13: Key_ISR(KEY_K2); break;
+        case GPIO_PIN_14: Key_ISR(KEY_K3); break;
+        case GPIO_PIN_15: Key_ISR(KEY_K4); break;
+        default: break;
+    }
+}
 /* USER CODE END 1 */

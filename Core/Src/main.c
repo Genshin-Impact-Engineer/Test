@@ -2,17 +2,10 @@
 /**
   ******************************************************************************
   * @file           : main.c
-  * @brief          : Main program body
-  ******************************************************************************
-  * @attention
-  *
-  * Copyright (c) 2026 STMicroelectronics.
-  * All rights reserved.
-  *
-  * This software is licensed under terms that can be found in the LICENSE file
-  * in the root directory of this software component.
-  * If no LICENSE file comes with this software, it is provided AS-IS.
-  *
+  * @brief          : 生鲜结算系统主入口 —— 模块编排器
+  *                   所有业务逻辑分散在独立模块中：
+  *                     buzzer.c 蜂鸣器 / alarm.c 报警 / led.c 心跳灯
+  *                     oled.c 显示 / key.c 按键 / sensor.c 称重
   ******************************************************************************
   */
 /* USER CODE END Header */
@@ -26,9 +19,12 @@
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
-#include "driver_oled.h"
+#include "oled.h"
+#include "key.h"
 #include "sensor.h"
-#include <stdio.h>
+#include "buzzer.h"
+#include "alarm.h"
+#include "led.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -38,7 +34,6 @@
 
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
-
 /* USER CODE END PD */
 
 /* Private macro -------------------------------------------------------------*/
@@ -49,7 +44,9 @@
 /* Private variables ---------------------------------------------------------*/
 
 /* USER CODE BEGIN PV */
-
+extern volatile uint32_t sys_tick_ms;
+extern volatile uint8_t  task_flag_10ms;
+extern volatile uint8_t  task_flag_100ms;
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -60,7 +57,6 @@ void SystemClock_Config(void);
 
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
-
 /* USER CODE END 0 */
 
 /**
@@ -75,8 +71,6 @@ int main(void)
   /* USER CODE END 1 */
 
   /* MCU Configuration--------------------------------------------------------*/
-
-  /* Reset of all peripherals, Initializes the Flash interface and the Systick. */
   HAL_Init();
 
   /* USER CODE BEGIN Init */
@@ -94,13 +88,21 @@ int main(void)
   MX_GPIO_Init();
   MX_DMA_Init();
   MX_I2C1_Init();
-  MX_USART1_UART_Init();
-  MX_USART2_UART_Init();
-  MX_TIM2_Init();
+  MX_USART1_UART_Init();   /* BLE5.4 蓝牙 */
+  MX_USART2_UART_Init();   /* ASR-PRO 语音 */
+  MX_TIM2_Init();           /* 蜂鸣器 PWM */
+
   /* USER CODE BEGIN 2 */
-  OLED_Init();
-  OLED_Clear();
+  OLED_Setup();
+  Boot_Interface_Show();
+  oled_force_render = 1;
+  OLED_UpdateDisplay(sys_tick_ms);
+
   Sensor_Init();
+  Key_Init();
+  Buzzer_Init();
+  Alarm_Init();
+  LED_Init();
   /* USER CODE END 2 */
 
   /* Infinite loop */
@@ -110,15 +112,85 @@ int main(void)
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
-    Sensor_Update();
-    float w = Sensor_GetWeight();
+    uint32_t now = sys_tick_ms;
 
-    char buf[16];
-    snprintf(buf, sizeof(buf), "W:%7.3f kg", w);
-    OLED_ClearLine(0, 2);
-    OLED_PrintString(0, 2, buf);
+    /* ============================================================
+     * 10ms 周期：按键扫描
+     * ============================================================ */
+    if (task_flag_10ms) {
+        task_flag_10ms = 0;
+        Key_Scan();
+    }
 
-    HAL_Delay(10);
+    /* ============================================================
+     * 100ms 周期：传感器 → 重量 → 报警
+     * ============================================================ */
+    if (task_flag_100ms) {
+        task_flag_100ms = 0;
+
+        Sensor_Update();
+        float w_display = Sensor_GetWeight();
+        float w_alarm   = Sensor_GetRawWeight();
+
+        /* 显示重量截取 2 位小数参与总价计算 */
+        float w_rounded = (float)((int)(w_display * 100.0f + 0.5f)) / 100.0f;
+
+        float prev = holog.scale.weight;
+        holog.scale.weight = w_rounded;
+        holog.scale.total_price = holog.scale.unit_price * w_rounded;
+        float d = w_rounded - prev;
+        if (d < 0) d = -d;
+        if (d >= 0.002f) oled_force_render = 1;
+
+        /* 报警使用未经死区的值，以检测小幅抖动 */
+        Alarm_Update(w_alarm, now);
+
+        if (Alarm_ShouldEnterPage() && holog.current_page != PAGE_ALARM) {
+            uint8_t ow = (Alarm_GetState() == ALARM_OVERWEIGHT);
+            uint8_t we = (Alarm_GetState() == ALARM_WEIGHT_ERR);
+            OLED_SetAlarmFlags(ow, we);
+            holog.prev_page = holog.current_page;
+            holog.current_page = PAGE_ALARM;
+        }
+        if (!Alarm_IsActive() && holog.current_page == PAGE_ALARM) {
+            OLED_SetAlarmFlags(0, 0);
+            holog.current_page = holog.prev_page;
+            holog.edit_mode = 0;
+            holog.selected_item = 0;
+        }
+    }
+
+    /* ============================================================
+     * 按键事件消费
+     * ============================================================ */
+    {
+        KeyId id;
+        uint8_t is_long;
+        while (Key_GetEvent(&id, &is_long)) {
+            if (holog.current_page == PAGE_ALARM) {
+                /* 报警页：任意键 → 退出页面，报警条件保留 */
+                Alarm_Dismiss();
+                holog.current_page = holog.prev_page;
+                holog.edit_mode = 0;
+                holog.selected_item = 0;
+                /* 清空剩余按键事件，防止误触下层页面 */
+                while (Key_GetEvent(&id, &is_long)) {}
+                break;
+            } else {
+                Buzzer_ShortBeep();
+                OLED_HandleKey(id, is_long);
+            }
+        }
+    }
+
+    /* ============================================================
+     * 周期刷新
+     * ============================================================ */
+    OLED_UpdateDisplay(now);
+    Buzzer_Process(now,
+                   holog.current_page == PAGE_ALARM,
+                   Alarm_IsActive());
+    LED_Process(now, Alarm_IsActive());
   }
   /* USER CODE END 3 */
 }
@@ -132,9 +204,6 @@ void SystemClock_Config(void)
   RCC_OscInitTypeDef RCC_OscInitStruct = {0};
   RCC_ClkInitTypeDef RCC_ClkInitStruct = {0};
 
-  /** Initializes the RCC Oscillators according to the specified parameters
-  * in the RCC_OscInitTypeDef structure.
-  */
   RCC_OscInitStruct.OscillatorType = RCC_OSCILLATORTYPE_HSI;
   RCC_OscInitStruct.HSIState = RCC_HSI_ON;
   RCC_OscInitStruct.HSICalibrationValue = RCC_HSICALIBRATION_DEFAULT;
@@ -144,8 +213,6 @@ void SystemClock_Config(void)
     Error_Handler();
   }
 
-  /** Initializes the CPU, AHB and APB buses clocks
-  */
   RCC_ClkInitStruct.ClockType = RCC_CLOCKTYPE_HCLK|RCC_CLOCKTYPE_SYSCLK
                               |RCC_CLOCKTYPE_PCLK1|RCC_CLOCKTYPE_PCLK2;
   RCC_ClkInitStruct.SYSCLKSource = RCC_SYSCLKSOURCE_HSI;
@@ -169,27 +236,13 @@ void SystemClock_Config(void)
   */
 void Error_Handler(void)
 {
-  /* USER CODE BEGIN Error_Handler_Debug */
-  /* User can add his own implementation to report the HAL error return state */
   __disable_irq();
   while (1)
   {
   }
-  /* USER CODE END Error_Handler_Debug */
 }
 #ifdef USE_FULL_ASSERT
-/**
-  * @brief  Reports the name of the source file and the source line number
-  *         where the assert_param error has occurred.
-  * @param  file: pointer to the source file name
-  * @param  line: assert_param error line source number
-  * @retval None
-  */
 void assert_failed(uint8_t *file, uint32_t line)
 {
-  /* USER CODE BEGIN 6 */
-  /* User can add his own implementation to report the file name and line number,
-     ex: printf("Wrong parameters value: file %s on line %d\r\n", file, line) */
-  /* USER CODE END 6 */
 }
 #endif /* USE_FULL_ASSERT */

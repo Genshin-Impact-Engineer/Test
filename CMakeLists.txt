@@ -45,7 +45,13 @@ target_link_directories(${CMAKE_PROJECT_NAME} PRIVATE
 # Add sources to executable
 target_sources(${CMAKE_PROJECT_NAME} PRIVATE
     Core/Src/sensor.c
+    Core/Src/oled.c
+    Core/Src/key.c
+    Core/Src/buzzer.c
+    Core/Src/alarm.c
+    Core/Src/led.c
     Logic/OLED_Dshan/driver_oled.c
+    Logic/OLED_Dshan/chinese_font.c
 )
 
 # Add include paths

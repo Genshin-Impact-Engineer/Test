@@ -22,10 +22,10 @@ extern "C" {
 #define OLED_BLINK_MS     300      /* 编辑模式闪烁间隔（ms） */
 
 /* ========== 产品数量 ========== */
-#define PRODUCT_COUNT     8        /* 商品种类数量 */
+#define PRODUCT_COUNT     7        /* 商品种类数量 */
 
 /* ========== 重量阈值 ========== */
-#define WEIGHT_MAX        30.0f    /* 最大量程（kg） */
+#define WEIGHT_MAX        2.0f     /* 超重阈值（kg） */
 #define WEIGHT_MIN        0.005f   /* 最小分辨重量（kg） */
 
 /*
@@ -88,8 +88,11 @@ typedef struct {
 /* 全局 OLED 实例 */
 extern OLED_t holog;
 
+/* 强制刷新标志：主循环置 1，OLED_UpdateDisplay 消费后清零 */
+extern volatile uint8_t oled_force_render;
+
 /* 全局商品表 */
-extern const Product_t product_table[PRODUCT_COUNT];
+extern Product_t product_table[PRODUCT_COUNT];
 
 /* 模块接口函数 */
 void OLED_Setup(void);

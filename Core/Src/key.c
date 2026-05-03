@@ -16,7 +16,8 @@
  * │ KEY3    │ 未选中→重称 / 选→退出  │ 放弃，返回称量       │ 退出报警   │
  * └─────────┴────────────────────────┴──────────────────────┴────────────┘
  *
- * 此文件与 HVAC 项目的 key.c 逻辑完全相同，仅按键映射注释不同。
+ * 引脚映射：KEY_K1=PB12(KEY1), KEY_K2=PB13(KEY2),
+ *           KEY_K3=PB14(KEY3), KEY_K4=PB15(KEY4)
  * 实际按键行为由 OLED_HandleKey() 根据当前页面解释。
  */
 
@@ -78,8 +79,10 @@ static void push_event(uint8_t evt) {
  *   第 2 级：事件判定 —— 释放=短按 / 超过 1s=长按
  *
  * 按键引脚映射表（使用数组而非 PIN_12+i，因为 GPIO_PIN_x 是位掩码）：
- *   PB12 → GPIO_PIN_12, PB13 → GPIO_PIN_13,
- *   PB14 → GPIO_PIN_14, PB15 → GPIO_PIN_15
+ *   [0] KEY_K1 → PB12 → GPIO_PIN_12
+ *   [1] KEY_K2 → PB13 → GPIO_PIN_13
+ *   [2] KEY_K3 → PB14 → GPIO_PIN_14
+ *   [3] KEY_K4 → PB15 → GPIO_PIN_15
  */
 void Key_Scan(void) {
     extern volatile uint32_t sys_tick_ms;

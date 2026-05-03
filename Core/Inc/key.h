@@ -4,8 +4,8 @@
  *          支持短按/长按检测，事件队列，EXTI 中断触发 + 轮询回退
  *          电子秤/POS 系统
  *
- * 硬件连接（与 HVAC 项目完全相同）：
- *   KEY0 = PB12, KEY1 = PB13, KEY2 = PB14, KEY3 = PB15
+ * 硬件连接（对齐 key_module_guide.md）：
+ *   KEY1 = PB12, KEY2 = PB13, KEY3 = PB14, KEY4 = PB15
  *   低电平有效（外部上拉，按下 → GPIO_PIN_RESET）
  */
 
@@ -25,7 +25,8 @@ extern "C" {
 
 /*
  * KeyId —— 按键标识枚举
- * KEY0 = PB12, KEY1 = PB13, KEY2 = PB14, KEY3 = PB15
+ * KEY_K1 = PB12(KEY1), KEY_K2 = PB13(KEY2),
+ * KEY_K3 = PB14(KEY3), KEY_K4 = PB15(KEY4)
  */
 typedef enum { KEY_K1 = 0, KEY_K2, KEY_K3, KEY_K4 } KeyId;
 

@@ -1,16 +1,9 @@
 /**
  * @file    oled.c
- * @brief   OLED 显示模块：SSD1306 128x64，I2C 接口
- *          电子秤/POS 系统三页面菜单 + 编辑模式（闪烁指示）
- *          8x16 ASCII 字库，4行×16列文本模式
- *          内置 I2C 故障恢复机制（STM32F1 I2C BUSY 缺陷补偿）
- *
- * 三页面说明：
- *   PAGE_WEIGHING —— 称重主页：类别、单价、重量、总价、光标选择
- *   PAGE_PREVIEW  —— 预览编辑：确认/修改类别与单价后保存
- *   PAGE_ALARM    —— 报警页：超重/重量异常提示
+ * @brief   OLED 三页面系统：称重/预览编辑/报警
+ *          中文显示 + 帧缓冲渲染 + I2C 故障恢复
+ *          按键映射严格对齐 oled_module_guide.md
  */
-
 #include "oled.h"
 #include "driver_oled.h"
 #include "bluetooth.h"
@@ -18,32 +11,39 @@
 #include <string.h>
 #include <stdio.h>
 
-/* 全局 OLED 实例 */
 OLED_t holog = {0};
+volatile uint8_t oled_force_render = 0;
 
-/* 8x16 ASCII 字库表（128 字符），在驱动文件中定义 */
 extern const uint8_t ascii_font[128][16];
+extern const uint8_t g_chinese_fonts[30][32];
 
-/* ========================================================================
- * 商品表（名称 + 默认单价）
- * 可根据实际商品修改
- * ======================================================================== */
-const Product_t product_table[PRODUCT_COUNT] = {
-    {"  Apple  ",  7.0f},
-    {" Banana  ",  3.0f},
-    {" Orange  ",  4.0f},
-    {"  Grape  ",  6.0f},
-    {"  Beef   ", 20.0f},
-    {"  Pork   ", 15.0f},
-    {" Chicken ", 12.0f},
-    {"  Fish   ", 10.0f},
+Product_t product_table[PRODUCT_COUNT] = {
+    {"Apple",    8.0f},   /* 苹果  */
+    {"Banana",   7.0f},   /* 香蕉  */
+    {"Pineap",   8.0f},   /* 菠萝  */
+    {"Grape",    6.0f},   /* 葡萄  */
+    {"WMelon",   4.0f},   /* 西瓜  */
+    {"Pear",    12.0f},   /* 梨子  */
+    {"Melon",   12.0f},   /* 哈密瓜 */
 };
 
-/* 帧缓冲区指针 */
+/* 商品中文名在 g_chinese_fonts 中的索引（最多 3 字） */
+static const uint8_t product_cn[PRODUCT_COUNT][3] = {
+    { 8,  9,  0},  /* 苹果   */
+    {10, 11,  0},  /* 香蕉   */
+    {12, 13,  0},  /* 菠萝   */
+    {14, 15,  0},  /* 葡萄   */
+    {16, 17,  0},  /* 西瓜   */
+    {18, 19,  0},  /* 梨子   */
+    {20, 21, 17},  /* 哈密瓜 */
+};
+static const uint8_t product_cn_len[PRODUCT_COUNT] = {2, 2, 2, 2, 2, 2, 3};
+
 static uint8_t *fb = NULL;
+static float    saved_price = 0.0f;   /* 进入编辑前的原单价，用于取消时恢复 */
 
 /* ========================================================================
- * 帧缓冲绘图函数（与 HVAC 项目完全相同）
+ * 帧缓冲绘图
  * ======================================================================== */
 
 static void fb_draw_char(uint8_t col, uint8_t page, char c) {
@@ -58,8 +58,17 @@ static void fb_draw_char(uint8_t col, uint8_t page, char c) {
 static void fb_draw_string(uint8_t col, uint8_t page, const char *str) {
     while (*str && col < OLED_COLS) {
         fb_draw_char(col, page, *str);
-        col++;
-        str++;
+        col++; str++;
+    }
+}
+
+/* 绘制单个 16x16 中文汉字（占 2 个 ASCII 列） */
+static void fb_draw_chinese(uint8_t col, uint8_t page, uint8_t idx) {
+    if (col > 14 || idx >= 30) return;
+    uint16_t base = page * 128 + col * 8;
+    for (int i = 0; i < 16; i++) {
+        fb[base + i] = g_chinese_fonts[idx][i];
+        fb[base + 128 + i] = g_chinese_fonts[idx][i + 16];
     }
 }
 
@@ -84,145 +93,174 @@ static void fb_draw_sel_rect(uint8_t page) {
 }
 
 /* ========================================================================
+ * 数值格式化助手（newlib-nano 禁 %f，手动拆整数+小数）
+ * ======================================================================== */
+static void fmt_val_1(char *buf, int sz, float val) {
+    int s = (int)(val * 10.0f + 0.5f);
+    snprintf(buf, sz, "%d.%1d", s / 10, s % 10);
+}
+static void fmt_val_2(char *buf, int sz, float val) {
+    int s = (int)(val * 100.0f + 0.5f);
+    snprintf(buf, sz, "%d.%02d", s / 100, s % 100);
+}
+
+/* ========================================================================
  * 页面 1：称重页（PAGE_WEIGHING）
  *
- * 行号 | 内容                      | 可选中
- *  0   | Category: XXXX           |   是（item=1）
- *  1   | UnitPrice: XX.X yuan/kg  |   是（item=2）
- *  2   | Weight: XX.XXX kg        |   否（实时只读）
- *  3   | Total: XX.XX yuan        |   否（实时计算）
- *
- * 操作逻辑：
- *   - KEY0/KYE1: 光标在 未选中→类别→单价 之间循环
- *   - KEY2 (未选中): 结算（进入预览页）
- *   - KEY3 (未选中): 重称（触发重量重新采集）
- *   - KEY2 (选中): 进入编辑模式
- *   - KEY3 (选中): 退出选中
+ * 布局（中文，16 列）：
+ *   │商品:苹果        │ ← 选中 item=1，选中框在 pages 0-1
+ *   │单价: 8.0元/kg   │ ← 选中 item=2，选中框在 pages 2-3
+ *   │重量:  1.25kg    │ ← 只读
+ *   │总价: 10.00元    │ ← 只读
  * ======================================================================== */
 static void render_page_weighing(void) {
-    char buf[18];
-    uint8_t blink = holog.edit_mode ? holog.blink_state : 1;
-    const Product_t *p = &product_table[holog.scale.category_idx];
+    char nbuf[8];
+    uint8_t blink_off = holog.edit_mode && !holog.blink_state;
+    uint8_t idx = holog.scale.category_idx;
 
-    /* 第 0 行：商品类别 */
-    if (blink || holog.selected_item != 1) {
-        snprintf(buf, sizeof(buf), "Category: %-7s", p->name);
-    } else {
-        snprintf(buf, sizeof(buf), "Category:         ");
+    /* ── 标签始终可见 ── */
+    fb_draw_chinese(0, 0, 0);   /* 商 */
+    fb_draw_chinese(2, 0, 1);   /* 品 */
+    fb_draw_char  (4, 0, ':');
+
+    fb_draw_chinese(0, 2, 2);   /* 单 */
+    fb_draw_chinese(2, 2, 6);   /* 价 */
+    fb_draw_char  (4, 2, ':');
+
+    /* ── 第 0 行：商品名（选中时闪烁）── */
+    if (!(holog.selected_item == 1 && blink_off)) {
+        fb_draw_chinese(5, 0, product_cn[idx][0]);
+        fb_draw_chinese(7, 0, product_cn[idx][1]);
+        if (product_cn_len[idx] > 2)
+            fb_draw_chinese(9, 0, product_cn[idx][2]);
     }
-    fb_draw_string(0, 0, buf);
 
-    /* 第 1 行：单价 */
-    if (blink || holog.selected_item != 2) {
-        snprintf(buf, sizeof(buf), "UniPrice:%4.1fY/kg", holog.scale.unit_price);
-    } else {
-        snprintf(buf, sizeof(buf), "UniPrice:          ");
+    /* ── 第 1 行：单价数值（选中时闪烁）── */
+    if (!(holog.selected_item == 2 && blink_off)) {
+        fb_draw_char  (5, 2, ' ');
+        fmt_val_1(nbuf, sizeof(nbuf), holog.scale.unit_price);
+        fb_draw_string(6, 2, nbuf);
+        fb_draw_chinese(10, 2, 7);   /* 元 */
+        fb_draw_char  (12, 2, '/');
+        fb_draw_char  (13, 2, 'k');
+        fb_draw_char  (14, 2, 'g');
     }
-    fb_draw_string(0, 2, buf);
 
-    /* 第 2 行：重量（只读） */
-    snprintf(buf, sizeof(buf), "Weight:%7.3f kg ", holog.scale.weight);
-    fb_draw_string(0, 4, buf);
+    /* ── 第 2 行：重量（只读）── */
+    fb_draw_chinese(0, 4, 3);   /* 重 */
+    fb_draw_chinese(2, 4, 4);   /* 量 */
+    fb_draw_char  (4, 4, ':');
+    fb_draw_char  (5, 4, ' ');
+    fmt_val_2(nbuf, sizeof(nbuf), holog.scale.weight);
+    fb_draw_string(6, 4, nbuf);
+    fb_draw_char  (11, 4, 'k');
+    fb_draw_char  (12, 4, 'g');
 
-    /* 第 3 行：总价（只读） */
-    snprintf(buf, sizeof(buf), "Total:%8.2f Y   ", holog.scale.total_price);
-    fb_draw_string(0, 6, buf);
+    /* ── 第 3 行：总价（只读）── */
+    fb_draw_chinese(0, 6, 5);   /* 总 */
+    fb_draw_chinese(2, 6, 6);   /* 价 */
+    fb_draw_char  (4, 6, ':');
+    fb_draw_char  (5, 6, ' ');
+    fmt_val_2(nbuf, sizeof(nbuf), holog.scale.total_price);
+    fb_draw_string(6, 6, nbuf);
+    fb_draw_chinese(11, 6, 7);   /* 元 */
 
-    /* 选中框 */
     if (holog.selected_item == 1) fb_draw_sel_rect(0);
     else if (holog.selected_item == 2) fb_draw_sel_rect(2);
 }
 
 /* ========================================================================
  * 页面 2：预览编辑页（PAGE_PREVIEW）
- *
- * 行号 | 内容
- *  0   | [Preview] Save? / [Edit] Category / [Edit] UnitPrice
- *  1   | Category: XXXX
- *  2   | UnitPrice: XX.X
- *  3   | Total: XX.XX yuan
- *
- * 操作逻辑：
- *   - KEY0 (未选中): 重称
- *   - KEY0 (选中): 退出选中
- *   - KEY1 (编辑类别): 切换到下一个商品
- *   - KEY1 (编辑单价): 单价 -0.5
- *   - KEY2: 保存修改，返回称重页
- *   - KEY3: 放弃修改，返回称重页
  * ======================================================================== */
 static void render_page_preview(void) {
-    char buf[18];
-    uint8_t blink = holog.edit_mode ? holog.blink_state : 1;
-    const Product_t *p = &product_table[holog.scale.category_idx];
+    char nbuf[8];
+    uint8_t blink_off = holog.edit_mode && !holog.blink_state;
+    uint8_t idx = holog.scale.category_idx;
 
     /* 第 0 行：状态提示 */
     if (!holog.edit_mode) {
-        snprintf(buf, sizeof(buf), "[Preview]         ");
+        fb_draw_string(0, 0, "[Preview]       ");
     } else if (holog.selected_item == 1) {
-        snprintf(buf, sizeof(buf), "[Edit]Category    ");
+        fb_draw_string(0, 0, "[Edit]商品      ");
     } else {
-        snprintf(buf, sizeof(buf), "[Edit]UnitPrice   ");
+        fb_draw_string(0, 0, "[Edit]单价      ");
     }
-    fb_draw_string(0, 0, buf);
 
-    /* 第 1 行：类别 */
-    if (blink || holog.selected_item != 1) {
-        snprintf(buf, sizeof(buf), "Category: %-7s", p->name);
-    } else {
-        snprintf(buf, sizeof(buf), "Category:         ");
+    /* ── 标签始终可见 ── */
+    fb_draw_chinese(0, 2, 0);   /* 商 */
+    fb_draw_chinese(2, 2, 1);   /* 品 */
+    fb_draw_char  (4, 2, ':');
+
+    fb_draw_chinese(0, 4, 2);   /* 单 */
+    fb_draw_chinese(2, 4, 6);   /* 价 */
+    fb_draw_char  (4, 4, ':');
+
+    /* 第 1 行：商品名（选中时闪烁） */
+    if (!(holog.selected_item == 1 && blink_off)) {
+        fb_draw_chinese(5, 2, product_cn[idx][0]);
+        fb_draw_chinese(7, 2, product_cn[idx][1]);
+        if (product_cn_len[idx] > 2)
+            fb_draw_chinese(9, 2, product_cn[idx][2]);
     }
-    fb_draw_string(0, 2, buf);
 
-    /* 第 2 行：单价 */
-    if (blink || holog.selected_item != 2) {
-        snprintf(buf, sizeof(buf), "UniPrice:%4.1fY/kg", holog.scale.unit_price);
-    } else {
-        snprintf(buf, sizeof(buf), "UniPrice:          ");
+    /* 第 2 行：单价数值（选中时闪烁） */
+    if (!(holog.selected_item == 2 && blink_off)) {
+        fb_draw_char  (5, 4, ' ');
+        fmt_val_1(nbuf, sizeof(nbuf), holog.scale.unit_price);
+        fb_draw_string(6, 4, nbuf);
+        fb_draw_chinese(10, 4, 7);   /* 元 */
+        fb_draw_char  (12, 4, '/');
+        fb_draw_char  (13, 4, 'k');
+        fb_draw_char  (14, 4, 'g');
     }
-    fb_draw_string(0, 4, buf);
 
-    /* 第 3 行：总价（预览） */
-    float preview_total = holog.scale.unit_price * holog.scale.weight;
-    snprintf(buf, sizeof(buf), "Total:%8.2f Y   ", preview_total);
-    fb_draw_string(0, 6, buf);
+    /* 第 3 行：总价预览 */
+    {
+        fb_draw_chinese(0, 6, 5);   /* 总 */
+        fb_draw_chinese(2, 6, 6);   /* 价 */
+        fb_draw_char  (4, 6, ':');
+        fb_draw_char  (5, 6, ' ');
+        float pt = holog.scale.unit_price * holog.scale.weight;
+        fmt_val_2(nbuf, sizeof(nbuf), pt);
+        fb_draw_string(6, 6, nbuf);
+        fb_draw_chinese(11, 6, 7);   /* 元 */
+    }
 
-    /* 选中框 */
     if (holog.selected_item == 1) fb_draw_sel_rect(2);
     else if (holog.selected_item == 2) fb_draw_sel_rect(4);
 }
 
 /* ========================================================================
- * 页面 3：报警页（PAGE_ALARM）
- *
- * 行号 | 内容
- *  0   | !! WARNING !!
- *  1   | Overweight!        / Weight Error!
- *  2   | Check the scale    / Please re-weigh
- *  3   | Press any key...
- *
- * 操作逻辑：任意按键退出报警，停止蜂鸣器，返回称重页
+ * 页面 3：报警页（PAGE_ALARM）—— 中文
  * ======================================================================== */
 static void render_page_alarm(void) {
-    fb_draw_string(0, 0, "!!   WARNING   !!");
-
+    /* 超重优先于重量抖动，仅显示关键信息 */
     if (holog.alarm_overweight) {
-        fb_draw_string(0, 2, "Overweight!      ");
-        fb_draw_string(0, 4, "Remove items     ");
+        fb_draw_chinese(3, 2, 22);  /* 超 */
+        fb_draw_chinese(5, 2, 3);   /* 重 */
+        fb_draw_char  (7, 2, '!');
+        fb_draw_chinese(1, 4, 25);  /* 请 */
+        fb_draw_chinese(3, 4, 3);   /* 重 */
+        fb_draw_chinese(5, 4, 26);  /* 新 */
+        fb_draw_chinese(7, 4, 27);  /* 测 */
+        fb_draw_chinese(9, 4, 4);   /* 量 */
     } else if (holog.alarm_weight_err) {
-        fb_draw_string(0, 2, "Weight Error!    ");
-        fb_draw_string(0, 4, "Please re-weigh  ");
-    } else {
-        fb_draw_string(0, 2, "                ");
-        fb_draw_string(0, 4, "                ");
+        fb_draw_chinese(3, 2, 3);   /* 重 */
+        fb_draw_chinese(5, 2, 4);   /* 量 */
+        fb_draw_chinese(7, 2, 23);  /* 异 */
+        fb_draw_chinese(9, 2, 24);  /* 常 */
+        fb_draw_char  (11,2, '!');
+        fb_draw_chinese(1, 4, 25);  /* 请 */
+        fb_draw_chinese(3, 4, 3);   /* 重 */
+        fb_draw_chinese(5, 4, 26);  /* 新 */
+        fb_draw_chinese(7, 4, 27);  /* 测 */
+        fb_draw_chinese(9, 4, 4);   /* 量 */
     }
-
-    fb_draw_string(0, 6, "Press any key... ");
 }
 
 /* ========================================================================
- * I2C 探测与恢复（与 HVAC 项目完全相同）
+ * I2C 探测与恢复
  * ======================================================================== */
-
 static int _oled_probe(void) {
     uint8_t tmp[2] = {0x00, 0xA4};
     return HAL_I2C_Master_Transmit(&hi2c1, 0x78, tmp, 2, 5);
@@ -242,26 +280,22 @@ static void OLED_ForceRecover(void) {
 
 void OLED_Setup(void) {
     OLED_Init();
-
     uint32_t xres, yres, bpp;
     fb = OLED_GetFrameBuffer(&xres, &yres, &bpp);
 
-    holog.current_page = PAGE_WEIGHING;
-    holog.prev_page = PAGE_WEIGHING;
-    holog.edit_mode = 0;
-    holog.selected_item = 0;
-    holog.blink_state = 1;
-
+    holog.current_page  = PAGE_WEIGHING;
+    holog.prev_page      = PAGE_WEIGHING;
+    holog.edit_mode      = 0;
+    holog.selected_item  = 0;
+    holog.blink_state    = 1;
     holog.scale.category_idx = 0;
-    holog.scale.unit_price = product_table[0].default_price;
-    holog.scale.weight = 0.0f;
-    holog.scale.total_price = 0.0f;
-
-    holog.alarm_overweight = 0;
-    holog.alarm_weight_err = 0;
-
-    holog.last_render = 0;
-    holog.flush_count = 0;
+    holog.scale.unit_price   = product_table[0].default_price;
+    holog.scale.weight       = 0.0f;
+    holog.scale.total_price  = 0.0f;
+    holog.alarm_overweight   = 0;
+    holog.alarm_weight_err   = 0;
+    holog.last_render        = 0;
+    holog.flush_count        = 0;
 
     OLED_ClearFrameBuffer();
     OLED_Flush();
@@ -269,24 +303,19 @@ void OLED_Setup(void) {
 
 void Boot_Interface_Show(void) {
     OLED_ClearFrameBuffer();
-
     fb_draw_rect(0, 0, 128, 64);
     fb_draw_string(2, 1, " Smart Scale ");
     fb_draw_string(4, 4, "Loading...");
-
     fb_draw_rect(10, 48, 108, 11);
-
     OLED_Flush();
     HAL_Delay(100);
 
     for (int i = 0; i < 107; i++) {
-        for (uint8_t row = 49; row <= 57; row++) {
+        for (uint8_t row = 49; row <= 57; row++)
             fb_draw_pixel(11 + i, row);
-        }
         OLED_FlushRegion(11 + i, 49, 1, 9);
         HAL_Delay(10);
     }
-
     for (uint8_t col = 0; col < 128; col++) {
         fb[4 * 128 + col] = 0;
         fb[5 * 128 + col] = 0;
@@ -294,7 +323,6 @@ void Boot_Interface_Show(void) {
     fb_draw_string(5, 4, "Ready!");
     OLED_FlushRegion(0, 32, 128, 16);
     HAL_Delay(1000);
-
     OLED_ClearFrameBuffer();
     OLED_Flush();
 }
@@ -304,49 +332,38 @@ void OLED_SetAlarmFlags(uint8_t overweight, uint8_t weight_err) {
     holog.alarm_weight_err = weight_err;
 }
 
-/* 蓝牙命令：按名称设置类别 */
 void OLED_SetCategoryByName(const char *name) {
     for (int i = 0; i < PRODUCT_COUNT; i++) {
         if (strstr(product_table[i].name, name)) {
             holog.scale.category_idx = i;
-            holog.scale.unit_price = product_table[i].default_price;
-            holog.scale.total_price = holog.scale.unit_price * holog.scale.weight;
+            holog.scale.unit_price   = product_table[i].default_price;
+            holog.scale.total_price  = holog.scale.unit_price * holog.scale.weight;
             return;
         }
     }
 }
 
-/* 蓝牙命令：设置单价 */
 void OLED_SetUnitPrice(float price) {
     if (price > 0) {
-        holog.scale.unit_price = price;
+        holog.scale.unit_price  = price;
         holog.scale.total_price = holog.scale.unit_price * holog.scale.weight;
     }
 }
 
-/* 重称触发 */
 void Scale_TriggerReweigh(void) {
-    /* 由外部传感器模块实现，此处设置标志 */
-    holog.scale.weight = 0.0f;
+    holog.scale.weight      = 0.0f;
     holog.scale.total_price = 0.0f;
 }
 
-/* ========================================================================
- * OLED_UpdateDisplay —— OLED 显示更新（由主循环周期性调用）
- * ======================================================================== */
 void OLED_UpdateDisplay(uint32_t now) {
-    if (now - holog.last_render < (holog.edit_mode ? OLED_BLINK_MS : OLED_REFRESH_MS))
+    if (!oled_force_render &&
+        now - holog.last_render < (holog.edit_mode ? OLED_BLINK_MS : OLED_REFRESH_MS))
         return;
+    oled_force_render = 0;
     holog.last_render = now;
 
-    if (_oled_probe() != HAL_OK) {
-        OLED_ForceRecover();
-    }
-
-    if (++holog.flush_count >= 200) {
-        holog.flush_count = 0;
-        OLED_ForceRecover();
-    }
+    if (_oled_probe() != HAL_OK) OLED_ForceRecover();
+    if (++holog.flush_count >= 200) { holog.flush_count = 0; OLED_ForceRecover(); }
 
     if (holog.edit_mode && now - holog.last_blink_tick >= OLED_BLINK_MS) {
         holog.blink_state = !holog.blink_state;
@@ -354,124 +371,104 @@ void OLED_UpdateDisplay(uint32_t now) {
     }
 
     OLED_ClearFrameBuffer();
-
     switch (holog.current_page) {
         case PAGE_WEIGHING: render_page_weighing(); break;
         case PAGE_PREVIEW:  render_page_preview();  break;
         case PAGE_ALARM:    render_page_alarm();    break;
     }
 
-    if (OLED_Flush() != HAL_OK) {
-        OLED_ForceRecover();
-        OLED_Flush();
-    }
+    if (OLED_Flush() != HAL_OK) { OLED_ForceRecover(); OLED_Flush(); }
 }
 
 /* ========================================================================
- * OLED_HandleKey —— 按键处理（三页面统一入口）
+ * OLED_HandleKey —— 按键分发（严格对齐 oled_module_guide.md + key_module_guide.md）
  *
- * 按键映射总览：
- * ┌─────────┬────────────────────────┬──────────────────────┬────────────┐
- * │  按键   │  PAGE_WEIGHING         │  PAGE_PREVIEW        │ PAGE_ALARM │
- * ├─────────┼────────────────────────┼──────────────────────┼────────────┤
- * │ KEY0    │ 光标上移: 0→1→2→0     │ 选中→退出 / 未→重称  │ 退出报警   │
- * │ KEY1    │ 光标下移: 0→2→1→0     │ 编辑类→下一 / 价-0.5 │ 退出报警   │
- * │ KEY2    │ 未选中→结算 / 选→编辑  │ 保存，返回称量       │ 退出报警   │
- * │ KEY3    │ 未选中→重称 / 选→退出  │ 放弃，返回称量       │ 退出报警   │
- * └─────────┴────────────────────────┴──────────────────────┴────────────┘
+ * 映射总览（引脚参照 key_module_guide.md）：
+ *   KEY_K4(PB15/丝印K4) = 光标上移 / 编辑:上一商品|单价+0.5
+ *   KEY_K3(PB14/丝印K3) = 光标下移 / 编辑:下一商品|单价-0.5
+ *   KEY_K2(PB13/丝印K2) = 结算|进入编辑 / 保存返回
+ *   KEY_K1(PB12/丝印K1) = 重称|退出选中 / 放弃返回
  * ======================================================================== */
 void OLED_HandleKey(KeyId id, uint8_t is_long) {
-    (void)is_long;  /* 本系统所有按键使用短按 */
-
-    /* ── PAGE_ALARM: 任意按键退出报警，返回称重页 ── */
-    if (holog.current_page == PAGE_ALARM) {
-        holog.current_page = holog.prev_page;
-        holog.selected_item = 0;
-        holog.edit_mode = 0;
-        holog.alarm_overweight = 0;
-        holog.alarm_weight_err = 0;
-        /* 停止蜂鸣器由主循环处理 alarm 标志清零后自动停止 */
-        return;
-    }
+    (void)is_long;
 
     switch (holog.current_page) {
 
     /* ================================================================
-     * PAGE_WEIGHING —— 称重主页
+     * PAGE_WEIGHING
      * ================================================================ */
     case PAGE_WEIGHING:
     {
         if (!holog.edit_mode) {
             /* ── 浏览模式 ── */
             switch (id) {
-            case KEY_K1:
-                /* KEY0: 光标上移循环 0→1→2→0 */
-                if (holog.selected_item == 0)
-                    holog.selected_item = 1;
-                else if (holog.selected_item == 1)
-                    holog.selected_item = 2;
-                else
-                    holog.selected_item = 0;
+            case KEY_K4:
+                /* 上: 0→2→1→0 (空→单价→商品名) */
+                if (holog.selected_item == 0)      holog.selected_item = 2;
+                else if (holog.selected_item == 2) holog.selected_item = 1;
+                else                               holog.selected_item = 0;
                 break;
-
-            case KEY_K2:
-                /* KEY1: 光标下移循环 0→2→1→0 */
-                if (holog.selected_item == 0)
-                    holog.selected_item = 2;
-                else if (holog.selected_item == 2)
-                    holog.selected_item = 1;
-                else
-                    holog.selected_item = 0;
-                break;
-
             case KEY_K3:
-                /* KEY2: 未选中→结算（进入预览页）；选中→进入编辑 */
+                /* 下: 0→1→2→0 (空→商品名→单价) */
+                if (holog.selected_item == 0)      holog.selected_item = 1;
+                else if (holog.selected_item == 1) holog.selected_item = 2;
+                else                               holog.selected_item = 0;
+                break;
+            case KEY_K2:
+                /* 未选中→结算(预览页)；选中→进入编辑 */
                 if (holog.selected_item == 0) {
-                    /* 结算：进入预览页 */
                     holog.scale.total_price = holog.scale.unit_price * holog.scale.weight;
                     holog.prev_page = PAGE_WEIGHING;
                     holog.current_page = PAGE_PREVIEW;
                     holog.selected_item = 0;
                     holog.edit_mode = 0;
-                } else if (holog.selected_item == 1 || holog.selected_item == 2) {
+                } else {
+                    saved_price = product_table[holog.scale.category_idx].default_price;
                     holog.edit_mode = 1;
                 }
                 break;
-
-            case KEY_K4:
-                /* KEY3: 未选中→重称；选中→退出选中 */
-                if (holog.selected_item == 0) {
-                    Scale_TriggerReweigh();
-                } else {
-                    holog.selected_item = 0;
-                }
+            case KEY_K1:
+                /* 未选中→重称；选中→退出选中 */
+                if (holog.selected_item == 0) Scale_TriggerReweigh();
+                else                         holog.selected_item = 0;
                 break;
             }
         } else {
-            /* ── 编辑模式（称重页）── */
+            /* ── 编辑模式 ── */
             switch (id) {
+            case KEY_K2:
+                /* 保存：回写单价到商品表 */
+                product_table[holog.scale.category_idx].default_price = holog.scale.unit_price;
+                holog.edit_mode = 0;
+                break;
             case KEY_K1:
-            case KEY_K4:
-                /* KEY0/KEY3: 退出编辑/退出选中 */
+                /* 放弃：恢复原单价 */
+                holog.scale.unit_price = saved_price;
                 holog.edit_mode = 0;
                 holog.selected_item = 0;
                 break;
-
-            case KEY_K2:
-                /* KEY1: 编辑类别→下一个商品；编辑单价→单价-0.5 */
+            case KEY_K4:
+                /* 上一商品 / 单价+0.5 */
                 if (holog.selected_item == 1) {
-                    /* 切换到下一个商品 */
+                    holog.scale.category_idx =
+                        (holog.scale.category_idx + PRODUCT_COUNT - 1) % PRODUCT_COUNT;
+                    holog.scale.unit_price = product_table[holog.scale.category_idx].default_price;
+                    saved_price = holog.scale.unit_price;
+                } else if (holog.selected_item == 2) {
+                    holog.scale.unit_price += 0.5f;
+                    if (holog.scale.unit_price > 200.0f) holog.scale.unit_price = 200.0f;
+                }
+                break;
+            case KEY_K3:
+                /* 下一商品 / 单价-0.5 */
+                if (holog.selected_item == 1) {
                     holog.scale.category_idx = (holog.scale.category_idx + 1) % PRODUCT_COUNT;
                     holog.scale.unit_price = product_table[holog.scale.category_idx].default_price;
+                    saved_price = holog.scale.unit_price;
                 } else if (holog.selected_item == 2) {
                     holog.scale.unit_price -= 0.5f;
                     if (holog.scale.unit_price < 0.5f) holog.scale.unit_price = 0.5f;
                 }
-                break;
-
-            case KEY_K3:
-                /* KEY2: 确认并退出编辑 */
-                holog.edit_mode = 0;
                 break;
             }
         }
@@ -479,85 +476,83 @@ void OLED_HandleKey(KeyId id, uint8_t is_long) {
     }
 
     /* ================================================================
-     * PAGE_PREVIEW —— 预览编辑页
+     * PAGE_PREVIEW
      * ================================================================ */
     case PAGE_PREVIEW:
     {
         if (!holog.edit_mode) {
             /* ── 浏览模式 ── */
             switch (id) {
-            case KEY_K1:
-                /* KEY0: 光标上移 0→1→2→0 */
-                if (holog.selected_item == 0)
-                    holog.selected_item = 1;
-                else if (holog.selected_item == 1)
-                    holog.selected_item = 2;
-                else
-                    holog.selected_item = 0;
+            case KEY_K4:
+                if (holog.selected_item == 0)      holog.selected_item = 2;
+                else if (holog.selected_item == 2) holog.selected_item = 1;
+                else                               holog.selected_item = 0;
                 break;
-
-            case KEY_K2:
-                /* KEY1: 光标下移 0→2→1→0 */
-                if (holog.selected_item == 0)
-                    holog.selected_item = 2;
-                else if (holog.selected_item == 2)
-                    holog.selected_item = 1;
-                else
-                    holog.selected_item = 0;
-                break;
-
             case KEY_K3:
-                /* KEY2: 保存修改，返回称重页 */
+                if (holog.selected_item == 0)      holog.selected_item = 1;
+                else if (holog.selected_item == 1) holog.selected_item = 2;
+                else                               holog.selected_item = 0;
+                break;
+            case KEY_K2:
+                /* 保存返回 */
                 holog.scale.total_price = holog.scale.unit_price * holog.scale.weight;
                 holog.current_page = PAGE_WEIGHING;
                 holog.selected_item = 0;
+                holog.edit_mode = 0;
                 break;
-
-            case KEY_K4:
-                /* KEY3: 放弃修改，返回称重页（数据不保存）*/
-                /* 注意：需要恢复进入预览前的数据。此处简化处理：保留当前编辑值 */
+            case KEY_K1:
+                /* 放弃返回 */
                 holog.current_page = PAGE_WEIGHING;
                 holog.selected_item = 0;
+                holog.edit_mode = 0;
                 break;
             }
         } else {
-            /* ── 编辑模式（预览页）── */
+            /* ── 编辑模式 ── */
             switch (id) {
-            case KEY_K1:
-                /* KEY0: 退出选中 */
-                holog.edit_mode = 0;
-                holog.selected_item = 0;
-                break;
-
             case KEY_K2:
-                /* KEY1: 编辑类别→下一个商品；编辑单价→单价-0.5 */
+                /* 保存返回：回写单价到商品表 */
+                product_table[holog.scale.category_idx].default_price = holog.scale.unit_price;
+                holog.scale.total_price = holog.scale.unit_price * holog.scale.weight;
+                holog.current_page = PAGE_WEIGHING;
+                holog.selected_item = 0;
+                holog.edit_mode = 0;
+                break;
+            case KEY_K1:
+                /* 放弃返回：恢复原单价 */
+                holog.scale.unit_price = saved_price;
+                holog.current_page = PAGE_WEIGHING;
+                holog.selected_item = 0;
+                holog.edit_mode = 0;
+                break;
+            case KEY_K4:
+                /* 上一商品 / 单价+0.5 */
+                if (holog.selected_item == 1) {
+                    holog.scale.category_idx =
+                        (holog.scale.category_idx + PRODUCT_COUNT - 1) % PRODUCT_COUNT;
+                    holog.scale.unit_price = product_table[holog.scale.category_idx].default_price;
+                    saved_price = holog.scale.unit_price;
+                } else if (holog.selected_item == 2) {
+                    holog.scale.unit_price += 0.5f;
+                    if (holog.scale.unit_price > 200.0f) holog.scale.unit_price = 200.0f;
+                }
+                break;
+            case KEY_K3:
+                /* 下一商品 / 单价-0.5 */
                 if (holog.selected_item == 1) {
                     holog.scale.category_idx = (holog.scale.category_idx + 1) % PRODUCT_COUNT;
                     holog.scale.unit_price = product_table[holog.scale.category_idx].default_price;
+                    saved_price = holog.scale.unit_price;
                 } else if (holog.selected_item == 2) {
                     holog.scale.unit_price -= 0.5f;
                     if (holog.scale.unit_price < 0.5f) holog.scale.unit_price = 0.5f;
                 }
-                break;
-
-            case KEY_K3:
-                /* KEY2: 保存修改 → 返回称重 */
-                holog.scale.total_price = holog.scale.unit_price * holog.scale.weight;
-                holog.edit_mode = 0;
-                holog.selected_item = 0;
-                holog.current_page = PAGE_WEIGHING;
-                break;
-
-            case KEY_K4:
-                /* KEY3: 放弃修改 → 返回称重 */
-                holog.edit_mode = 0;
-                holog.selected_item = 0;
-                holog.current_page = PAGE_WEIGHING;
                 break;
             }
         }
         break;
     }
 
+    default: break;
     }
 }
