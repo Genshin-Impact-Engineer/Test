@@ -132,6 +132,10 @@ int main(void)
         float w_display = Sensor_GetWeight();
         float w_alarm   = Sensor_GetRawWeight();
 
+        /* 钳位：传感器卸掉重物后可能有微小负漂，强制 ≥0 */
+        if (w_display < 0.0f) w_display = 0.0f;
+        if (w_alarm   < 0.0f) w_alarm   = 0.0f;
+
         /* 显示重量截取 2 位小数参与总价计算 */
         float w_rounded = (float)((int)(w_display * 100.0f + 0.5f)) / 100.0f;
 

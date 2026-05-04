@@ -245,16 +245,11 @@ static void render_page_alarm(void) {
         fb_draw_chinese(7, 4, 27);  /* 测 */
         fb_draw_chinese(9, 4, 4);   /* 量 */
     } else if (holog.alarm_weight_err) {
-        fb_draw_chinese(3, 2, 3);   /* 重 */
-        fb_draw_chinese(5, 2, 4);   /* 量 */
-        fb_draw_chinese(7, 2, 23);  /* 异 */
-        fb_draw_chinese(9, 2, 24);  /* 常 */
-        fb_draw_char  (11,2, '!');
-        fb_draw_chinese(1, 4, 25);  /* 请 */
-        fb_draw_chinese(3, 4, 3);   /* 重 */
-        fb_draw_chinese(5, 4, 26);  /* 新 */
-        fb_draw_chinese(7, 4, 27);  /* 测 */
-        fb_draw_chinese(9, 4, 4);   /* 量 */
+        fb_draw_chinese(3, 3, 3);   /* 重 */
+        fb_draw_chinese(5, 3, 4);   /* 量 */
+        fb_draw_chinese(7, 3, 23);  /* 异 */
+        fb_draw_chinese(9, 3, 24);  /* 常 */
+        fb_draw_char  (11,3, '!');
     }
 }
 
