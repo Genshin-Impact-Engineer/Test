@@ -50,6 +50,7 @@ target_sources(${CMAKE_PROJECT_NAME} PRIVATE
     Core/Src/buzzer.c
     Core/Src/alarm.c
     Core/Src/led.c
+    Core/Src/voice.c
     Logic/OLED_Dshan/driver_oled.c
     Logic/OLED_Dshan/chinese_font.c
 )

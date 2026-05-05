@@ -558,7 +558,7 @@ int OLED_PrintString(uint8_t x, uint8_t y, const char *str)
 
 void OLED_PrintChinese(uint8_t x, uint8_t y)
 {   
-	extern const uint8_t g_chinese_fonts[30][32];
+	extern const uint8_t g_chinese_fonts[40][32];
 
 	uint8_t page = y;
 	uint8_t col  = x*8;

@@ -24,5 +24,8 @@ void  Sensor_Init(void);
 void  Sensor_Update(void);
 float Sensor_GetWeight(void);         /* 死区限幅后的重量，用于显示 */
 float Sensor_GetRawWeight(void);      /* 滤波后但未经死区的重量，用于报警抖动检测 */
+void  Sensor_RequestReTare(void);     /* 重新去皮：仅在空载时调用，约 1s */
+uint8_t Sensor_IsTaring(void);        /* 是否正在去皮中 */
+void  Sensor_ResetFilters(void);      /* 复位滤波器，保持零位不变（清零重称用）*/
 
 #endif

@@ -9,6 +9,9 @@
 
 #include "main.h"
 
+/* 蜂鸣器开始鸣叫时置 1（进入 CONTINUOUS 或 INTERMITTENT_ON），语音模块消费后清零 */
+extern volatile uint8_t buzzer_beeped;
+
 void Buzzer_Init(void);
 void Buzzer_ShortBeep(void);
 void Buzzer_Process(uint32_t now, uint8_t on_alarm_page, uint8_t alarm_active);

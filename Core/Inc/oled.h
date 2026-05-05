@@ -81,6 +81,10 @@ typedef struct {
 
     uint8_t alarm_overweight;
     uint8_t alarm_weight_err;
+    float   tare_weight;        /* 去皮重量（kg） */
+    uint8_t tare_active;        /* 去皮激活标志 */
+    uint8_t tare_blink;         /* 去皮值闪烁状态 */
+    uint32_t last_tare_blink;   /* 去皮闪烁上次切换时刻 */
     uint32_t last_render;
     uint16_t flush_count;
 } OLED_t;

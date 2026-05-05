@@ -24,6 +24,8 @@ typedef enum { BUZZ_OFF, BUZZ_SHORT, BUZZ_CONTINUOUS,
 static BuzzState state    = BUZZ_OFF;
 static uint32_t  start_ms = 0;
 
+volatile uint8_t buzzer_beeped = 0;  /* 蜂鸣器开始鸣叫标志，供语音模块消费 */
+
 static inline void set_3kHz(void) {
     __HAL_TIM_SET_AUTORELOAD(&htim2, ARR_3K);
     __HAL_TIM_SET_COMPARE(&htim2, TIM_CHANNEL_1, CCR_3K);
@@ -56,11 +58,11 @@ void Buzzer_Process(uint32_t now, uint8_t on_alarm_page, uint8_t alarm_active)
         if (on_alarm_page) {
             set_3kHz();
             HAL_TIM_PWM_Start(&htim2, TIM_CHANNEL_1);
-            state = BUZZ_CONTINUOUS;
+            state = BUZZ_CONTINUOUS; buzzer_beeped = 1;
         } else if (alarm_active) {
             set_3kHz();
             HAL_TIM_PWM_Start(&htim2, TIM_CHANNEL_1);
-            state    = BUZZ_INTERMITTENT_ON;
+            state    = BUZZ_INTERMITTENT_ON; buzzer_beeped = 1;
             start_ms = now;
         }
         break;
@@ -72,11 +74,11 @@ void Buzzer_Process(uint32_t now, uint8_t on_alarm_page, uint8_t alarm_active)
             if (on_alarm_page) {
                 set_3kHz();
                 HAL_TIM_PWM_Start(&htim2, TIM_CHANNEL_1);
-                state = BUZZ_CONTINUOUS;
+                state = BUZZ_CONTINUOUS; buzzer_beeped = 1;
             } else if (alarm_active) {
                 set_3kHz();
                 HAL_TIM_PWM_Start(&htim2, TIM_CHANNEL_1);
-                state    = BUZZ_INTERMITTENT_ON;
+                state    = BUZZ_INTERMITTENT_ON; buzzer_beeped = 1;
                 start_ms = now;
             }
         }
@@ -86,7 +88,7 @@ void Buzzer_Process(uint32_t now, uint8_t on_alarm_page, uint8_t alarm_active)
         if (!on_alarm_page) {
             if (alarm_active) {
                 set_3kHz();
-                state    = BUZZ_INTERMITTENT_ON;
+                state    = BUZZ_INTERMITTENT_ON; buzzer_beeped = 1;
                 start_ms = now;
             } else {
                 HAL_TIM_PWM_Stop(&htim2, TIM_CHANNEL_1);
@@ -101,7 +103,7 @@ void Buzzer_Process(uint32_t now, uint8_t on_alarm_page, uint8_t alarm_active)
             state = BUZZ_OFF;
         } else if (on_alarm_page) {
             set_3kHz();
-            state = BUZZ_CONTINUOUS;
+            state = BUZZ_CONTINUOUS; buzzer_beeped = 1;
         } else if (now - start_ms >= INTERVAL_ON_MS) {
             HAL_TIM_PWM_Stop(&htim2, TIM_CHANNEL_1);
             state    = BUZZ_INTERMITTENT_OFF;
@@ -115,10 +117,10 @@ void Buzzer_Process(uint32_t now, uint8_t on_alarm_page, uint8_t alarm_active)
         } else if (on_alarm_page) {
             set_3kHz();
             HAL_TIM_PWM_Start(&htim2, TIM_CHANNEL_1);
-            state = BUZZ_CONTINUOUS;
+            state = BUZZ_CONTINUOUS; buzzer_beeped = 1;
         } else if (now - start_ms >= INTERVAL_OFF_MS) {
             HAL_TIM_PWM_Start(&htim2, TIM_CHANNEL_1);
-            state    = BUZZ_INTERMITTENT_ON;
+            state    = BUZZ_INTERMITTENT_ON; buzzer_beeped = 1;
             start_ms = now;
         }
         break;

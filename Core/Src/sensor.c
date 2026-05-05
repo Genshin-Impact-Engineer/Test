@@ -4,7 +4,13 @@ static int32_t zero_offset   = 0;
 static float   scale_factor  = DEFAULT_SCALE_FACTOR;
 static float   filtered_w    = 0.0f;
 static float   last_out      = 0.0f;
-static float   raw_filtered  = 0.0f;  /* 滤波后但未经死区的值 */
+static float   raw_filtered  = 0.0f;
+
+/* 非阻塞重新去皮 */
+static uint8_t  tare_state = 0;   /* 0=空闲, 1=采集中 */
+static uint8_t  tare_count = 0;
+static int64_t  tare_sum   = 0;
+#define TARE_RE_SAMPLES  10       /* 10 次 ≈ 1s */
 
 /* 微秒级短延时（8MHz HSI 下约 1μs） */
 #define HX711_US_DELAY()  do { volatile int _d = 8; while (--_d); } while(0)
@@ -112,6 +118,25 @@ void Sensor_Init(void)
 
 void Sensor_Update(void)
 {
+    /* ── 正在重新去皮：采集样本，不更新输出 ── */
+    if (tare_state == 1) {
+        int32_t raw = HX711_Read();
+        if (raw >= 0) {
+            tare_sum += raw;
+            if (++tare_count >= TARE_RE_SAMPLES) {
+                zero_offset = (int32_t)(tare_sum / tare_count);
+                filtered_w  = 0.0f;
+                last_out    = 0.0f;
+                raw_filtered= 0.0f;
+                buf_idx     = 0;
+                buf_full    = 0;
+                for (int i = 0; i < BUF_SZ; i++) raw_buf[i] = 0;
+                tare_state  = 0;
+            }
+        }
+        return;
+    }
+
     int32_t raw = HX711_Read();
     if (raw < 0) return;
 
@@ -138,4 +163,32 @@ float Sensor_GetWeight(void)
 float Sensor_GetRawWeight(void)
 {
     return raw_filtered;
+}
+
+void Sensor_RequestReTare(void)
+{
+    /* 立即将显示归零，开始采集新零位样本 */
+    last_out    = 0.0f;
+    raw_filtered= 0.0f;
+    filtered_w  = 0.0f;
+    tare_state  = 1;
+    tare_count  = 0;
+    tare_sum    = 0;
+    for (int i = 0; i < BUF_SZ; i++) raw_buf[i] = 0;
+}
+
+uint8_t Sensor_IsTaring(void)
+{
+    return tare_state == 1;
+}
+
+void Sensor_ResetFilters(void)
+{
+    /* 仅复位滤波状态，不改 zero_offset，放着重物也能正确重新测 */
+    filtered_w   = 0.0f;
+    last_out     = 0.0f;
+    raw_filtered = 0.0f;
+    buf_idx      = 0;
+    buf_full     = 0;
+    for (int i = 0; i < BUF_SZ; i++) raw_buf[i] = 0;
 }

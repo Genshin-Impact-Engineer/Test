@@ -8,6 +8,8 @@
 #include "driver_oled.h"
 #include "bluetooth.h"
 #include "i2c.h"
+#include "voice.h"
+#include "sensor.h"
 #include <string.h>
 #include <stdio.h>
 
@@ -15,7 +17,7 @@ OLED_t holog = {0};
 volatile uint8_t oled_force_render = 0;
 
 extern const uint8_t ascii_font[128][16];
-extern const uint8_t g_chinese_fonts[30][32];
+extern const uint8_t g_chinese_fonts[40][32];
 
 Product_t product_table[PRODUCT_COUNT] = {
     {"Apple",    8.0f},   /* 苹果  */
@@ -64,7 +66,7 @@ static void fb_draw_string(uint8_t col, uint8_t page, const char *str) {
 
 /* 绘制单个 16x16 中文汉字（占 2 个 ASCII 列） */
 static void fb_draw_chinese(uint8_t col, uint8_t page, uint8_t idx) {
-    if (col > 14 || idx >= 30) return;
+    if (col > 14 || idx >= 40) return;
     uint16_t base = page * 128 + col * 8;
     for (int i = 0; i < 16; i++) {
         fb[base + i] = g_chinese_fonts[idx][i];
@@ -95,10 +97,6 @@ static void fb_draw_sel_rect(uint8_t page) {
 /* ========================================================================
  * 数值格式化助手（newlib-nano 禁 %f，手动拆整数+小数）
  * ======================================================================== */
-static void fmt_val_1(char *buf, int sz, float val) {
-    int s = (int)(val * 10.0f + 0.5f);
-    snprintf(buf, sz, "%d.%1d", s / 10, s % 10);
-}
 static void fmt_val_2(char *buf, int sz, float val) {
     int s = (int)(val * 100.0f + 0.5f);
     snprintf(buf, sz, "%d.%02d", s / 100, s % 100);
@@ -118,7 +116,7 @@ static void render_page_weighing(void) {
     uint8_t blink_off = holog.edit_mode && !holog.blink_state;
     uint8_t idx = holog.scale.category_idx;
 
-    /* ── 标签始终可见 ── */
+    /* ── 标签双字，始终可见 ── */
     fb_draw_chinese(0, 0, 0);   /* 商 */
     fb_draw_chinese(2, 0, 1);   /* 品 */
     fb_draw_char  (4, 0, ':');
@@ -135,35 +133,37 @@ static void render_page_weighing(void) {
             fb_draw_chinese(9, 0, product_cn[idx][2]);
     }
 
-    /* ── 第 1 行：单价数值（选中时闪烁）── */
+    /* ── 第 1 行：单价（2位小数，选中时闪烁）── */
     if (!(holog.selected_item == 2 && blink_off)) {
-        fb_draw_char  (5, 2, ' ');
-        fmt_val_1(nbuf, sizeof(nbuf), holog.scale.unit_price);
-        fb_draw_string(6, 2, nbuf);
-        fb_draw_chinese(10, 2, 7);   /* 元 */
-        fb_draw_char  (12, 2, '/');
-        fb_draw_char  (13, 2, 'k');
-        fb_draw_char  (14, 2, 'g');
+        fmt_val_2(nbuf, sizeof(nbuf), holog.scale.unit_price);
+        fb_draw_string(5, 2, nbuf);
+        fb_draw_chinese(10,2, 7);   /* 元 */
+        fb_draw_char  (12,2, '/');
+        fb_draw_char  (13,2, 'k');
+        fb_draw_char  (14,2, 'g');
     }
 
-    /* ── 第 2 行：重量（只读）── */
+    /* ── 第 2 行：重量（只读）+ 去皮（闪烁）── */
     fb_draw_chinese(0, 4, 3);   /* 重 */
     fb_draw_chinese(2, 4, 4);   /* 量 */
     fb_draw_char  (4, 4, ':');
-    fb_draw_char  (5, 4, ' ');
     fmt_val_2(nbuf, sizeof(nbuf), holog.scale.weight);
-    fb_draw_string(6, 4, nbuf);
-    fb_draw_char  (11, 4, 'k');
-    fb_draw_char  (12, 4, 'g');
+    fb_draw_string(5, 4, nbuf);
+    fb_draw_char  (9, 4, 'k');
+    fb_draw_char  (10,4, 'g');
+    if (holog.tare_active && holog.tare_blink) {
+        fb_draw_char  (11,4, ' ');
+        fmt_val_2(nbuf, sizeof(nbuf), holog.tare_weight);
+        fb_draw_string(12,4, nbuf);
+    }
 
     /* ── 第 3 行：总价（只读）── */
     fb_draw_chinese(0, 6, 5);   /* 总 */
     fb_draw_chinese(2, 6, 6);   /* 价 */
     fb_draw_char  (4, 6, ':');
-    fb_draw_char  (5, 6, ' ');
     fmt_val_2(nbuf, sizeof(nbuf), holog.scale.total_price);
-    fb_draw_string(6, 6, nbuf);
-    fb_draw_chinese(11, 6, 7);   /* 元 */
+    fb_draw_string(5, 6, nbuf);
+    fb_draw_chinese(10,6, 7);    /* 元 */
 
     if (holog.selected_item == 1) fb_draw_sel_rect(0);
     else if (holog.selected_item == 2) fb_draw_sel_rect(2);
@@ -186,7 +186,7 @@ static void render_page_preview(void) {
         fb_draw_string(0, 0, "[Edit]单价      ");
     }
 
-    /* ── 标签始终可见 ── */
+    /* ── 标签双字，始终可见 ── */
     fb_draw_chinese(0, 2, 0);   /* 商 */
     fb_draw_chinese(2, 2, 1);   /* 品 */
     fb_draw_char  (4, 2, ':');
@@ -203,15 +203,14 @@ static void render_page_preview(void) {
             fb_draw_chinese(9, 2, product_cn[idx][2]);
     }
 
-    /* 第 2 行：单价数值（选中时闪烁） */
+    /* 第 2 行：单价（2位小数，选中时闪烁） */
     if (!(holog.selected_item == 2 && blink_off)) {
-        fb_draw_char  (5, 4, ' ');
-        fmt_val_1(nbuf, sizeof(nbuf), holog.scale.unit_price);
-        fb_draw_string(6, 4, nbuf);
-        fb_draw_chinese(10, 4, 7);   /* 元 */
-        fb_draw_char  (12, 4, '/');
-        fb_draw_char  (13, 4, 'k');
-        fb_draw_char  (14, 4, 'g');
+        fmt_val_2(nbuf, sizeof(nbuf), holog.scale.unit_price);
+        fb_draw_string(5, 4, nbuf);
+        fb_draw_chinese(10,4, 7);   /* 元 */
+        fb_draw_char  (12,4, '/');
+        fb_draw_char  (13,4, 'k');
+        fb_draw_char  (14,4, 'g');
     }
 
     /* 第 3 行：总价预览 */
@@ -219,11 +218,10 @@ static void render_page_preview(void) {
         fb_draw_chinese(0, 6, 5);   /* 总 */
         fb_draw_chinese(2, 6, 6);   /* 价 */
         fb_draw_char  (4, 6, ':');
-        fb_draw_char  (5, 6, ' ');
         float pt = holog.scale.unit_price * holog.scale.weight;
         fmt_val_2(nbuf, sizeof(nbuf), pt);
-        fb_draw_string(6, 6, nbuf);
-        fb_draw_chinese(11, 6, 7);   /* 元 */
+        fb_draw_string(5, 6, nbuf);
+        fb_draw_chinese(10,6, 7);   /* 元 */
     }
 
     if (holog.selected_item == 1) fb_draw_sel_rect(2);
@@ -234,22 +232,25 @@ static void render_page_preview(void) {
  * 页面 3：报警页（PAGE_ALARM）—— 中文
  * ======================================================================== */
 static void render_page_alarm(void) {
-    /* 超重优先于重量抖动，仅显示关键信息 */
+    /* 超重优先于重量抖动，居中显示 */
     if (holog.alarm_overweight) {
         fb_draw_chinese(3, 2, 22);  /* 超 */
         fb_draw_chinese(5, 2, 3);   /* 重 */
         fb_draw_char  (7, 2, '!');
+        fb_draw_chinese(2, 4, 25);  /* 请 */
+        fb_draw_chinese(4, 4, 31);  /* 减 */
+        fb_draw_chinese(6, 4, 3);   /* 重 */
+    } else if (holog.alarm_weight_err) {
+        fb_draw_chinese(3, 2, 3);   /* 重 */
+        fb_draw_chinese(5, 2, 4);   /* 量 */
+        fb_draw_chinese(7, 2, 23);  /* 异 */
+        fb_draw_chinese(9, 2, 24);  /* 常 */
+        fb_draw_char  (11,2, '!');
         fb_draw_chinese(1, 4, 25);  /* 请 */
         fb_draw_chinese(3, 4, 3);   /* 重 */
         fb_draw_chinese(5, 4, 26);  /* 新 */
-        fb_draw_chinese(7, 4, 27);  /* 测 */
+        fb_draw_chinese(7, 4, 30);  /* 称 */
         fb_draw_chinese(9, 4, 4);   /* 量 */
-    } else if (holog.alarm_weight_err) {
-        fb_draw_chinese(3, 3, 3);   /* 重 */
-        fb_draw_chinese(5, 3, 4);   /* 量 */
-        fb_draw_chinese(7, 3, 23);  /* 异 */
-        fb_draw_chinese(9, 3, 24);  /* 常 */
-        fb_draw_char  (11,3, '!');
     }
 }
 
@@ -289,6 +290,10 @@ void OLED_Setup(void) {
     holog.scale.total_price  = 0.0f;
     holog.alarm_overweight   = 0;
     holog.alarm_weight_err   = 0;
+    holog.tare_weight        = 0.0f;
+    holog.tare_active        = 0;
+    holog.tare_blink         = 1;
+    holog.last_tare_blink    = 0;
     holog.last_render        = 0;
     holog.flush_count        = 0;
 
@@ -297,13 +302,19 @@ void OLED_Setup(void) {
 }
 
 void Boot_Interface_Show(void) {
+    /* ── 直接显示进度条加载动画 ── */
     OLED_ClearFrameBuffer();
     fb_draw_rect(0, 0, 128, 64);
-    fb_draw_string(2, 1, " Smart Scale ");
-    fb_draw_string(4, 4, "Loading...");
+    fb_draw_chinese(0, 2, 32);  /* 智 */
+    fb_draw_chinese(2, 2, 33);  /* 能 */
+    fb_draw_chinese(4, 2, 34);  /* 生 */
+    fb_draw_chinese(6, 2, 35);  /* 鲜 */
+    fb_draw_chinese(8, 2, 36);  /* 结 */
+    fb_draw_chinese(10,2, 37);  /* 算 */
+    fb_draw_chinese(12,2, 38);  /* 系 */
+    fb_draw_chinese(14,2, 39);  /* 统 */
     fb_draw_rect(10, 48, 108, 11);
     OLED_Flush();
-    HAL_Delay(100);
 
     for (int i = 0; i < 107; i++) {
         for (uint8_t row = 49; row <= 57; row++)
@@ -311,6 +322,12 @@ void Boot_Interface_Show(void) {
         OLED_FlushRegion(11 + i, 49, 1, 9);
         HAL_Delay(10);
     }
+
+    /* ── 传感器初始化 ── */
+    extern void Sensor_Init(void);
+    Sensor_Init();
+
+    /* ── 就绪 ── */
     for (uint8_t col = 0; col < 128; col++) {
         fb[4 * 128 + col] = 0;
         fb[5 * 128 + col] = 0;
@@ -348,11 +365,13 @@ void OLED_SetUnitPrice(float price) {
 void Scale_TriggerReweigh(void) {
     holog.scale.weight      = 0.0f;
     holog.scale.total_price = 0.0f;
+    oled_force_render       = 1;
+    Sensor_ResetFilters();   /* 复位滤波但不改零位，有重物也能正确重新测量 */
 }
 
 void OLED_UpdateDisplay(uint32_t now) {
-    if (!oled_force_render &&
-        now - holog.last_render < (holog.edit_mode ? OLED_BLINK_MS : OLED_REFRESH_MS))
+    uint32_t rate = (holog.edit_mode || holog.tare_active) ? OLED_BLINK_MS : OLED_REFRESH_MS;
+    if (!oled_force_render && now - holog.last_render < rate)
         return;
     oled_force_render = 0;
     holog.last_render = now;
@@ -363,6 +382,10 @@ void OLED_UpdateDisplay(uint32_t now) {
     if (holog.edit_mode && now - holog.last_blink_tick >= OLED_BLINK_MS) {
         holog.blink_state = !holog.blink_state;
         holog.last_blink_tick = now;
+    }
+    if (holog.tare_active && now - holog.last_tare_blink >= OLED_BLINK_MS) {
+        holog.tare_blink = !holog.tare_blink;
+        holog.last_tare_blink = now;
     }
 
     OLED_ClearFrameBuffer();
@@ -410,22 +433,31 @@ void OLED_HandleKey(KeyId id, uint8_t is_long) {
                 else                               holog.selected_item = 0;
                 break;
             case KEY_K2:
-                /* 未选中→结算(预览页)；选中→进入编辑 */
+                /* 未选中→仅播报；选中→播报＋进入编辑 */
                 if (holog.selected_item == 0) {
-                    holog.scale.total_price = holog.scale.unit_price * holog.scale.weight;
-                    holog.prev_page = PAGE_WEIGHING;
-                    holog.current_page = PAGE_PREVIEW;
-                    holog.selected_item = 0;
-                    holog.edit_mode = 0;
+                    Voice_MeasureComplete();
                 } else {
+                    Voice_StartAdjust();
                     saved_price = product_table[holog.scale.category_idx].default_price;
                     holog.edit_mode = 1;
                 }
                 break;
             case KEY_K1:
-                /* 未选中→重称；选中→退出选中 */
-                if (holog.selected_item == 0) Scale_TriggerReweigh();
-                else                         holog.selected_item = 0;
+                /* 未选中→去皮/取消去皮＋语音；选中→退出选中 */
+                if (holog.selected_item == 0) {
+                    if (holog.tare_active) {
+                        Voice_TareOff();
+                        holog.tare_active = 0;
+                        holog.tare_weight = 0.0f;
+                    } else {
+                        Voice_Tare();
+                        holog.tare_active = 1;
+                        holog.tare_weight = holog.scale.weight;
+                    }
+                    oled_force_render = 1;
+                } else {
+                    holog.selected_item = 0;
+                }
                 break;
             }
         } else {
@@ -435,12 +467,14 @@ void OLED_HandleKey(KeyId id, uint8_t is_long) {
                 /* 保存：回写单价到商品表 */
                 product_table[holog.scale.category_idx].default_price = holog.scale.unit_price;
                 holog.edit_mode = 0;
+                Voice_Completed();
                 break;
             case KEY_K1:
                 /* 放弃：恢复原单价 */
                 holog.scale.unit_price = saved_price;
                 holog.edit_mode = 0;
                 holog.selected_item = 0;
+                Voice_Cancelled();
                 break;
             case KEY_K4:
                 /* 上一商品 / 单价+0.5 */

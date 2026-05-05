@@ -25,6 +25,7 @@
 #include "buzzer.h"
 #include "alarm.h"
 #include "led.h"
+#include "voice.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -94,15 +95,15 @@ int main(void)
 
   /* USER CODE BEGIN 2 */
   OLED_Setup();
-  Boot_Interface_Show();
+  Boot_Interface_Show();   /* 标题立即可见，进度条+Ready 在 Sensor_Init 之后 */
   oled_force_render = 1;
   OLED_UpdateDisplay(sys_tick_ms);
 
-  Sensor_Init();
   Key_Init();
   Buzzer_Init();
   Alarm_Init();
   LED_Init();
+  Voice_Init();
   /* USER CODE END 2 */
 
   /* Infinite loop */
@@ -136,8 +137,15 @@ int main(void)
         if (w_display < 0.0f) w_display = 0.0f;
         if (w_alarm   < 0.0f) w_alarm   = 0.0f;
 
+        /* 去皮：净重 = 毛重 - 皮重 */
+        float w_net = w_display;
+        if (holog.tare_active) {
+            w_net -= holog.tare_weight;
+            if (w_net < 0.0f) w_net = 0.0f;
+        }
+
         /* 显示重量截取 2 位小数参与总价计算 */
-        float w_rounded = (float)((int)(w_display * 100.0f + 0.5f)) / 100.0f;
+        float w_rounded = (float)((int)(w_net * 100.0f + 0.5f)) / 100.0f;
 
         float prev = holog.scale.weight;
         holog.scale.weight = w_rounded;
@@ -146,8 +154,15 @@ int main(void)
         if (d < 0) d = -d;
         if (d >= 0.002f) oled_force_render = 1;
 
-        /* 报警使用未经死区的值，以检测小幅抖动 */
-        Alarm_Update(w_alarm, now);
+        /* 报警使用未经死区的值（净重），以检测小幅抖动 */
+        {
+            float w_alarm_net = w_alarm;
+            if (holog.tare_active) {
+                w_alarm_net -= holog.tare_weight;
+                if (w_alarm_net < 0.0f) w_alarm_net = 0.0f;
+            }
+            Alarm_Update(w_alarm_net, now);
+        }
 
         if (Alarm_ShouldEnterPage() && holog.current_page != PAGE_ALARM) {
             uint8_t ow = (Alarm_GetState() == ALARM_OVERWEIGHT);
@@ -195,6 +210,10 @@ int main(void)
                    holog.current_page == PAGE_ALARM,
                    Alarm_IsActive());
     LED_Process(now, Alarm_IsActive());
+    Voice_Process(now,
+                  holog.current_page == PAGE_ALARM,
+                  Alarm_GetState() == ALARM_OVERWEIGHT,
+                  Alarm_GetState() == ALARM_WEIGHT_ERR);
   }
   /* USER CODE END 3 */
 }
