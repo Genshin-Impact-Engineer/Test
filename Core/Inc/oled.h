@@ -107,6 +107,7 @@ void OLED_SetAlarmFlags(uint8_t overweight, uint8_t weight_err);
 
 /* 蓝牙命令回调 */
 void OLED_SetCategoryByName(const char *name);
+void OLED_SetCategoryByIndex(uint8_t idx);
 void OLED_SetUnitPrice(float price);
 
 /* 重称触发（蓝牙或按键） */

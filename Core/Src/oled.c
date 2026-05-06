@@ -355,10 +355,21 @@ void OLED_SetCategoryByName(const char *name) {
     }
 }
 
+void OLED_SetCategoryByIndex(uint8_t idx) {
+    if (idx >= PRODUCT_COUNT) return;
+    holog.scale.category_idx = idx;
+    holog.scale.unit_price   = product_table[idx].default_price;
+    holog.scale.total_price  = holog.scale.unit_price * holog.scale.weight;
+    oled_force_render = 1;
+    Bluetooth_RequestUpload();
+}
+
 void OLED_SetUnitPrice(float price) {
     if (price > 0) {
         holog.scale.unit_price  = price;
         holog.scale.total_price = holog.scale.unit_price * holog.scale.weight;
+        oled_force_render = 1;
+        Bluetooth_RequestUpload();
     }
 }
 
@@ -436,10 +447,16 @@ void OLED_HandleKey(KeyId id, uint8_t is_long) {
                 /* 未选中→仅播报；选中→播报＋进入编辑 */
                 if (holog.selected_item == 0) {
                     Voice_MeasureComplete();
+                    Bluetooth_SetStatus("Weighing complete");
+                    hbt.status_pending = 1;
+                    Bluetooth_RequestUpload();
                 } else {
                     Voice_StartAdjust();
                     saved_price = product_table[holog.scale.category_idx].default_price;
                     holog.edit_mode = 1;
+                    Bluetooth_SetStatus("Adjusting, please reweigh");
+                    hbt.status_pending = 1;
+                    Bluetooth_RequestUpload();
                 }
                 break;
             case KEY_K1:
@@ -449,11 +466,15 @@ void OLED_HandleKey(KeyId id, uint8_t is_long) {
                         Voice_TareOff();
                         holog.tare_active = 0;
                         holog.tare_weight = 0.0f;
+                        Bluetooth_SetStatus("Tare Off");
                     } else {
                         Voice_Tare();
                         holog.tare_active = 1;
                         holog.tare_weight = holog.scale.weight;
+                        Bluetooth_SetStatus("Tare");
                     }
+                    hbt.status_pending = 1;
+                    Bluetooth_RequestUpload();
                     oled_force_render = 1;
                 } else {
                     holog.selected_item = 0;
@@ -468,6 +489,9 @@ void OLED_HandleKey(KeyId id, uint8_t is_long) {
                 product_table[holog.scale.category_idx].default_price = holog.scale.unit_price;
                 holog.edit_mode = 0;
                 Voice_Completed();
+                Bluetooth_SetStatus("Change completed");
+                hbt.status_pending = 1;
+                Bluetooth_RequestUpload();
                 break;
             case KEY_K1:
                 /* 放弃：恢复原单价 */
@@ -475,6 +499,9 @@ void OLED_HandleKey(KeyId id, uint8_t is_long) {
                 holog.edit_mode = 0;
                 holog.selected_item = 0;
                 Voice_Cancelled();
+                Bluetooth_SetStatus("Change cancelled");
+                hbt.status_pending = 1;
+                Bluetooth_RequestUpload();
                 break;
             case KEY_K4:
                 /* 上一商品 / 单价+0.5 */
@@ -487,6 +514,7 @@ void OLED_HandleKey(KeyId id, uint8_t is_long) {
                     holog.scale.unit_price += 0.5f;
                     if (holog.scale.unit_price > 200.0f) holog.scale.unit_price = 200.0f;
                 }
+                Bluetooth_RequestUpload();
                 break;
             case KEY_K3:
                 /* 下一商品 / 单价-0.5 */
@@ -498,6 +526,7 @@ void OLED_HandleKey(KeyId id, uint8_t is_long) {
                     holog.scale.unit_price -= 0.5f;
                     if (holog.scale.unit_price < 0.5f) holog.scale.unit_price = 0.5f;
                 }
+                Bluetooth_RequestUpload();
                 break;
             }
         }
@@ -528,12 +557,18 @@ void OLED_HandleKey(KeyId id, uint8_t is_long) {
                 holog.current_page = PAGE_WEIGHING;
                 holog.selected_item = 0;
                 holog.edit_mode = 0;
+                Bluetooth_SetStatus("Change completed");
+                hbt.status_pending = 1;
+                Bluetooth_RequestUpload();
                 break;
             case KEY_K1:
                 /* 放弃返回 */
                 holog.current_page = PAGE_WEIGHING;
                 holog.selected_item = 0;
                 holog.edit_mode = 0;
+                Bluetooth_SetStatus("Change cancelled");
+                hbt.status_pending = 1;
+                Bluetooth_RequestUpload();
                 break;
             }
         } else {
@@ -546,6 +581,9 @@ void OLED_HandleKey(KeyId id, uint8_t is_long) {
                 holog.current_page = PAGE_WEIGHING;
                 holog.selected_item = 0;
                 holog.edit_mode = 0;
+                Bluetooth_SetStatus("Change completed");
+                hbt.status_pending = 1;
+                Bluetooth_RequestUpload();
                 break;
             case KEY_K1:
                 /* 放弃返回：恢复原单价 */
@@ -553,6 +591,9 @@ void OLED_HandleKey(KeyId id, uint8_t is_long) {
                 holog.current_page = PAGE_WEIGHING;
                 holog.selected_item = 0;
                 holog.edit_mode = 0;
+                Bluetooth_SetStatus("Change cancelled");
+                hbt.status_pending = 1;
+                Bluetooth_RequestUpload();
                 break;
             case KEY_K4:
                 /* 上一商品 / 单价+0.5 */
@@ -565,6 +606,7 @@ void OLED_HandleKey(KeyId id, uint8_t is_long) {
                     holog.scale.unit_price += 0.5f;
                     if (holog.scale.unit_price > 200.0f) holog.scale.unit_price = 200.0f;
                 }
+                Bluetooth_RequestUpload();
                 break;
             case KEY_K3:
                 /* 下一商品 / 单价-0.5 */
@@ -576,6 +618,7 @@ void OLED_HandleKey(KeyId id, uint8_t is_long) {
                     holog.scale.unit_price -= 0.5f;
                     if (holog.scale.unit_price < 0.5f) holog.scale.unit_price = 0.5f;
                 }
+                Bluetooth_RequestUpload();
                 break;
             }
         }

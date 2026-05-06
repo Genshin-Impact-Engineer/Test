@@ -26,6 +26,7 @@
 #include "alarm.h"
 #include "led.h"
 #include "voice.h"
+#include "bluetooth.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -48,6 +49,7 @@
 extern volatile uint32_t sys_tick_ms;
 extern volatile uint8_t  task_flag_10ms;
 extern volatile uint8_t  task_flag_100ms;
+static uint32_t last_bt_upload = 0;
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -72,7 +74,7 @@ int main(void)
   /* USER CODE END 1 */
 
   /* MCU Configuration--------------------------------------------------------*/
-  HAL_Init();
+      HAL_Init();
 
   /* USER CODE BEGIN Init */
 
@@ -104,6 +106,7 @@ int main(void)
   Alarm_Init();
   LED_Init();
   Voice_Init();
+  Bluetooth_Init();
   /* USER CODE END 2 */
 
   /* Infinite loop */
@@ -214,6 +217,40 @@ int main(void)
                   holog.current_page == PAGE_ALARM,
                   Alarm_GetState() == ALARM_OVERWEIGHT,
                   Alarm_GetState() == ALARM_WEIGHT_ERR);
+
+    /* ============================================================
+     * 蓝牙：数据同步 + 定时上报 + 命令处理 + TX 卡死恢复
+     * ============================================================ */
+    {
+        /* 活数据：计算重量/去皮值 */
+        float weight   = holog.scale.weight;
+        float tare_val = 0.0f;
+        if (holog.tare_active) {
+            tare_val = holog.tare_weight;
+        }
+        Bluetooth_SetLiveData(holog.scale.category_idx,
+                              holog.scale.unit_price,
+                              weight, tare_val,
+                              holog.scale.total_price);
+
+        /* 状态：报警覆盖，操作状态（status_pending）由 oled.c 设置 */
+        if (Alarm_GetState() == ALARM_OVERWEIGHT)
+            Bluetooth_SetStatus("Overweight!\nPlease measure again");
+        else if (Alarm_GetState() == ALARM_WEIGHT_ERR)
+            Bluetooth_SetStatus("Weight abnormal!\nPlease measure again");
+        else if (!hbt.status_pending)
+            Bluetooth_SetStatus("");
+
+        if (hbt.immediate_upload || now - last_bt_upload >= BT_PERIOD_MS) {
+            hbt.immediate_upload = 0;
+            hbt.status_pending   = 0;
+            last_bt_upload = now;
+            Bluetooth_SendData();
+        }
+
+        Bluetooth_ProcessCommand();
+        Bluetooth_CheckTXStuck(now);
+    }
   }
   /* USER CODE END 3 */
 }
@@ -227,10 +264,13 @@ void SystemClock_Config(void)
   RCC_OscInitTypeDef RCC_OscInitStruct = {0};
   RCC_ClkInitTypeDef RCC_ClkInitStruct = {0};
 
-  RCC_OscInitStruct.OscillatorType = RCC_OSCILLATORTYPE_HSI;
+  RCC_OscInitStruct.OscillatorType = RCC_OSCILLATORTYPE_HSE;
+  RCC_OscInitStruct.HSEState = RCC_HSE_ON;
+  RCC_OscInitStruct.HSEPredivValue = RCC_HSE_PREDIV_DIV1;
   RCC_OscInitStruct.HSIState = RCC_HSI_ON;
-  RCC_OscInitStruct.HSICalibrationValue = RCC_HSICALIBRATION_DEFAULT;
-  RCC_OscInitStruct.PLL.PLLState = RCC_PLL_NONE;
+  RCC_OscInitStruct.PLL.PLLState = RCC_PLL_ON;
+  RCC_OscInitStruct.PLL.PLLSource = RCC_PLLSOURCE_HSE;
+  RCC_OscInitStruct.PLL.PLLMUL = RCC_PLL_MUL9;
   if (HAL_RCC_OscConfig(&RCC_OscInitStruct) != HAL_OK)
   {
     Error_Handler();
@@ -238,12 +278,12 @@ void SystemClock_Config(void)
 
   RCC_ClkInitStruct.ClockType = RCC_CLOCKTYPE_HCLK|RCC_CLOCKTYPE_SYSCLK
                               |RCC_CLOCKTYPE_PCLK1|RCC_CLOCKTYPE_PCLK2;
-  RCC_ClkInitStruct.SYSCLKSource = RCC_SYSCLKSOURCE_HSI;
+  RCC_ClkInitStruct.SYSCLKSource = RCC_SYSCLKSOURCE_PLLCLK;
   RCC_ClkInitStruct.AHBCLKDivider = RCC_SYSCLK_DIV1;
   RCC_ClkInitStruct.APB1CLKDivider = RCC_HCLK_DIV1;
   RCC_ClkInitStruct.APB2CLKDivider = RCC_HCLK_DIV1;
 
-  if (HAL_RCC_ClockConfig(&RCC_ClkInitStruct, FLASH_LATENCY_0) != HAL_OK)
+  if (HAL_RCC_ClockConfig(&RCC_ClkInitStruct, FLASH_LATENCY_2) != HAL_OK)
   {
     Error_Handler();
   }

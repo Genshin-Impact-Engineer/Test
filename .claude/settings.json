@@ -2,7 +2,23 @@
   "permissions": {
     "allow": [
       "Bash(ninja)",
-      "Bash(cmake ../.. -G Ninja)"
+      "Bash(cmake ../.. -G Ninja)",
+      "Bash(cmake --build build/Debug --)",
+      "Bash(cube-cmake -DCMAKE_BUILD_TYPE=Debug -DCMAKE_TOOLCHAIN_FILE=E:/Project/graduation_project/SRFES/cmake/gcc-arm-none-eabi.cmake -DCMAKE_EXPORT_COMPILE_COMMANDS:BOOL=TRUE -S . -B build/Debug -G Ninja)",
+      "Bash(cube-cmake --build build/Debug --)",
+      "Bash(cube-cmake -DCMAKE_BUILD_TYPE=Debug -DCMAKE_TOOLCHAIN_FILE=E:/Project/graduation_project/SRFES/cmake/gcc-arm-none-eabi.cmake -DCMAKE_EXPORT_COMPILE_COMMANDS:BOOL=TRUE -S /e/Project/graduation_project/SRFES -B /e/Project/graduation_project/SRFES/build/Debug -G Ninja)",
+      "Bash(cube-cmake --build /e/Project/graduation_project/SRFES/build/Debug --)",
+      "Bash(cmake --build build)",
+      "Bash(cmake --build .)",
+      "Bash(ls -la \"e:/Project/graduation_project/\" 2>/dev/null || echo \"Directory not found\")",
+      "Read(//e/Project/graduation_project/**)",
+      "Bash(ls -la \"e:/Project/\" 2>/dev/null | head -50)",
+      "Read(//e/Project/**)",
+      "Bash(find \"e:/\" -maxdepth 3 -type d -name \"*A工程*\" 2>/dev/null | head -10)",
+      "Read(//e//**)",
+      "Bash(rm -f CMakeCache.txt)",
+      "Bash(rm -rf CMakeFiles cmake)",
+      "Bash(cmake ../.. -G Ninja -DCMAKE_BUILD_TYPE=Debug -DCMAKE_TOOLCHAIN_FILE=cmake/gcc-arm-none-eabi.cmake)"
     ]
   }
 }
