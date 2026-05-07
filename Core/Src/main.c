@@ -104,6 +104,7 @@ int main(void)
 
   Key_Init();
   Buzzer_Init();
+
   Alarm_Init();
   LED_Init();
   Voice_Init();
@@ -232,7 +233,8 @@ int main(void)
         Bluetooth_SetLiveData(holog.scale.category_idx,
                               holog.scale.unit_price,
                               weight, tare_val,
-                              holog.scale.total_price);
+                              holog.scale.total_price,
+                              holog.tare_active ? 1 : 0);
 
         /* 状态管理：
          * - 报警激活 → 覆盖为报警文本，保存之前的操作状态

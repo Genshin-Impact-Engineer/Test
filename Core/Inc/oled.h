@@ -109,6 +109,7 @@ void OLED_SetAlarmFlags(uint8_t overweight, uint8_t weight_err);
 void OLED_SetCategoryByName(const char *name);
 void OLED_SetCategoryByIndex(uint8_t idx);
 void OLED_SetUnitPrice(float price);
+void OLED_SetTare(uint8_t on);
 
 /* 重称触发（蓝牙或按键） */
 void Scale_TriggerReweigh(void);

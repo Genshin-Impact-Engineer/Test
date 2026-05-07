@@ -23,12 +23,17 @@ void Voice_Init(void);
 void Voice_Process(uint32_t now, uint8_t on_alarm_page,
                    uint8_t overweight, uint8_t weight_err);
 
-/* 按键事件触发 */
+/* 按键事件触发（标志队列，由 Voice_Process 统一发送） */
 void Voice_Completed(void);
 void Voice_Cancelled(void);
 void Voice_Tare(void);
 void Voice_TareOff(void);
 void Voice_MeasureComplete(void);
 void Voice_StartAdjust(void);
+
+/* 蓝牙下行命令立即发送（绕过队列，消除延迟） */
+void Voice_CompletedNow(void);
+void Voice_TareNow(void);
+void Voice_TareOffNow(void);
 
 #endif

@@ -44,6 +44,11 @@ void Voice_TareOff(void)         { tareoff_flag      = 1; }
 void Voice_MeasureComplete(void) { measure_done_flag = 1; }
 void Voice_StartAdjust(void)    { start_adjust_flag = 1; }
 
+/* 立即发送：绕过标志队列，用于蓝牙下行命令 */
+void Voice_CompletedNow(void) { send_str("completed"); }
+void Voice_TareNow(void)      { send_str("Tare"); }
+void Voice_TareOffNow(void)   { send_str("Tare Off"); }
+
 void Voice_Process(uint32_t now, uint8_t on_alarm_pg,
                    uint8_t overweight, uint8_t weight_err)
 {

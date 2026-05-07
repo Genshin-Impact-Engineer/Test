@@ -102,6 +102,12 @@ static void parse_field(const char *key, uint16_t key_len, const char *val) {
         }
         return;
     }
+    if (FIELD_MATCH(key, "selected_Tare") || FIELD_MATCH(key, "selected")) {
+        uint8_t v = (uint8_t)strtol(val, NULL, 10);
+        extern void OLED_SetTare(uint8_t on);
+        OLED_SetTare(v);
+        return;
+    }
 }
 
 /* ========================================================================
@@ -168,13 +174,15 @@ void Bluetooth_SendData(void) {
         "text_float_Weight:%.2f;"
         "text_NetWeight:%.2f;"
         "text_float_Total:%.2f;"
-        "text_state:%s",
+        "text_state:%s;"
+        "selected_Tare:%u",
         hbt.selected_goods,
         hbt.number_price,
         hbt.weight,
         hbt.net_weight,
         hbt.total_price,
-        hbt.text_state);
+        hbt.text_state,
+        hbt.selected_tare);
 
     if (len <= 0 || len >= (int)sizeof(tx_buf) - 5) return;
 
@@ -243,12 +251,14 @@ void Bluetooth_ProcessCommand(void) {
  * ======================================================================== */
 
 void Bluetooth_SetLiveData(uint8_t goods_idx, float price,
-                           float weight, float net_weight, float total) {
+                           float weight, float net_weight, float total,
+                           uint8_t tare) {
     hbt.selected_goods = goods_idx;
     hbt.number_price = price;
     hbt.weight = weight;
     hbt.net_weight = net_weight;
     hbt.total_price = total;
+    hbt.selected_tare = tare;
 }
 
 void Bluetooth_SetStatus(const char *status) {

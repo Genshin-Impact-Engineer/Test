@@ -362,6 +362,12 @@ void OLED_SetCategoryByIndex(uint8_t idx) {
     holog.scale.category_idx = idx;
     holog.scale.unit_price   = product_table[idx].default_price;
     holog.scale.total_price  = holog.scale.unit_price * holog.scale.weight;
+    if (!Alarm_IsActive()) {
+        Bluetooth_SetStatus("Change completed");
+        hbt.status_set_time = sys_tick_ms;
+        hbt.status_pending = 1;
+    }
+    Voice_CompletedNow();
     oled_force_render = 1;
     Bluetooth_RequestUpload();
 }
@@ -371,9 +377,37 @@ void OLED_SetUnitPrice(float price) {
         holog.scale.unit_price  = price;
         holog.scale.total_price = holog.scale.unit_price * holog.scale.weight;
         product_table[holog.scale.category_idx].default_price = price;
+        if (!Alarm_IsActive()) {
+            Bluetooth_SetStatus("Change completed");
+            hbt.status_set_time = sys_tick_ms;
+            hbt.status_pending = 1;
+        }
+        Voice_CompletedNow();
         oled_force_render = 1;
         Bluetooth_RequestUpload();
     }
+}
+
+void OLED_SetTare(uint8_t on) {
+    if (on && !holog.tare_active) {
+        holog.tare_active = 1;
+        holog.tare_weight = holog.scale.weight;
+        Voice_TareNow();
+        if (!Alarm_IsActive()) Bluetooth_SetStatus("Tare");
+    } else if (!on && holog.tare_active) {
+        holog.tare_active = 0;
+        holog.tare_weight = 0.0f;
+        Voice_TareOffNow();
+        if (!Alarm_IsActive()) Bluetooth_SetStatus("Tare Off");
+    } else {
+        return;
+    }
+    if (!Alarm_IsActive()) {
+        hbt.status_set_time = sys_tick_ms;
+        hbt.status_pending = 1;
+    }
+    oled_force_render = 1;
+    Bluetooth_RequestUpload();
 }
 
 void Scale_TriggerReweigh(void) {

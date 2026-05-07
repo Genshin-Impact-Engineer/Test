@@ -29,13 +29,14 @@ extern "C" {
 /*
  * Bluetooth_t —— 蓝牙通信状态结构体
  *
- * 上行数据字段（6 个，单帧发送）：
+ * 上行数据字段（7 个，单帧发送）：
  *   selected_goods  = 商品索引（0~6）
  *   number_price    = 单价（元/kg）
  *   weight          = 重量（kg）
  *   net_weight      = 去皮重量（kg）
  *   total_price     = 总价（元）
  *   text_state      = 系统状态英文文本
+ *   selected_tare   = 去皮选择（0=取消去皮, 1=去皮）
  */
 typedef struct {
     uint8_t rx_buf[BT_RX_BUF_SIZE];
@@ -50,6 +51,7 @@ typedef struct {
     float   net_weight;
     float   total_price;
     char    text_state[48];
+    uint8_t selected_tare;
 
     volatile uint8_t immediate_upload;
     uint8_t  status_pending;
@@ -68,7 +70,8 @@ void Bluetooth_SendData(void);           /* 单帧 6 字段，周期性发送 */
 void Bluetooth_ProcessCommand(void);
 void Bluetooth_ParseCommand(const char *cmd);
 void Bluetooth_SetLiveData(uint8_t goods_idx, float price,
-                           float weight, float net_weight, float total);
+                           float weight, float net_weight, float total,
+                           uint8_t tare);
 void Bluetooth_SetStatus(const char *status);
 void Bluetooth_RequestUpload(void);
 uint8_t Bluetooth_CheckTXStuck(uint32_t now);
