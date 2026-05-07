@@ -22,8 +22,8 @@ static uint32_t  start_ms = 0;
 
 volatile uint8_t buzzer_beeped = 0;
 
-static inline void buzzer_on(void)  { HAL_GPIO_WritePin(GPIOA, GPIO_PIN_0, GPIO_PIN_SET); }
-static inline void buzzer_off(void) { HAL_GPIO_WritePin(GPIOA, GPIO_PIN_0, GPIO_PIN_RESET); }
+static inline void buzzer_on(void)  { HAL_GPIO_WritePin(GPIOA, GPIO_PIN_0, GPIO_PIN_RESET); }
+static inline void buzzer_off(void) { HAL_GPIO_WritePin(GPIOA, GPIO_PIN_0, GPIO_PIN_SET); }
 
 void Buzzer_Init(void)
 {
