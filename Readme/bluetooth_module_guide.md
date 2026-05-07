@@ -63,31 +63,36 @@ LOAD_FAIL：加载错误
 线下控制按键，进行数值更改/模式改变操作，系统状态快速上传数据至小程序
 
 系统状态 （text_state）
-系统状态分为操作和报警两种
-操作
+# 系统状态分为操作和报警两种
+# 操作：
 开始调整：
+应上传字符为：
 Adjusting, please reweigh
 调整完成：
+应上传字符为：
 Change completed
 取消调整：
+应上传字符为：
 Change cancelled
 去皮：
+应上传字符为：
 Tare
 取消去皮：
+应上传字符为：
 Tare Off
 称量完成：
+应上传字符为：
 Weighing complete
-报警分为两种：
+# 报警：
 超重
 应上传字符为：
-Overweight！
-Please measure again
+Overweight！Please lose weight
 重量抖动
 应上传字符为：
-Weight abnormal!
-Please measure again
-系统状态正常时什么也不显示
+Weight abnormal！Please measure again
+# 系统状态正常时什么也不显示
 当程序切换水果、oled上也要快速更改对应数据，并快速上传数据使小程序变为对应值
+当小程序/按键修改某个水果单价值，将修改后的值更新在单价表中
 
 ```
 

@@ -53,6 +53,9 @@ typedef struct {
 
     volatile uint8_t immediate_upload;
     uint8_t  status_pending;
+    uint8_t  status_from_alarm;          /* 当前状态文本来自报警（需在报警结束后恢复） */
+    char     prev_operation_status[48];  /* 报警前的操作状态文本（用于恢复） */
+    uint32_t status_set_time;            /* 操作状态设置时间戳（ms），2s 自动清空 */
     uint32_t last_tx_start;              /* DMA TX 启动时间戳（ms），用于 TX 卡死检测 */
 } Bluetooth_t;
 

@@ -27,6 +27,7 @@
 #include "led.h"
 #include "voice.h"
 #include "bluetooth.h"
+#include <string.h>
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -233,17 +234,47 @@ int main(void)
                               weight, tare_val,
                               holog.scale.total_price);
 
-        /* 状态：报警覆盖，操作状态（status_pending）由 oled.c 设置 */
-        if (Alarm_GetState() == ALARM_OVERWEIGHT)
-            Bluetooth_SetStatus("Overweight!\nPlease measure again");
-        else if (Alarm_GetState() == ALARM_WEIGHT_ERR)
-            Bluetooth_SetStatus("Weight abnormal!\nPlease measure again");
-        else if (!hbt.status_pending)
-            Bluetooth_SetStatus("");
+        /* 状态管理：
+         * - 报警激活 → 覆盖为报警文本，保存之前的操作状态
+         * - 报警结束 → 恢复之前的操作状态（2s 后自动清空）
+         * - 无报警   → 操作状态 2s 后自动清空
+         */
+        if (Alarm_IsActive()) {
+            if (!hbt.status_from_alarm) {
+                /* 报警首次触发：保存当前操作状态 */
+                strncpy(hbt.prev_operation_status, hbt.text_state,
+                        sizeof(hbt.prev_operation_status) - 1);
+                hbt.prev_operation_status[sizeof(hbt.prev_operation_status) - 1] = '\0';
+                hbt.status_from_alarm = 1;
+            }
+            if (Alarm_GetState() == ALARM_OVERWEIGHT)
+                Bluetooth_SetStatus("Overweight! Please lose weight");
+            else
+                Bluetooth_SetStatus("Weight abnormal! Please measure again");
+        } else {
+            if (hbt.status_from_alarm) {
+                /* 报警结束：恢复之前的操作状态 */
+                strncpy(hbt.text_state, hbt.prev_operation_status,
+                        sizeof(hbt.text_state) - 1);
+                hbt.text_state[sizeof(hbt.text_state) - 1] = '\0';
+                hbt.status_from_alarm = 0;
+                if (hbt.text_state[0] != '\0') {
+                    /* 有操作状态：重置 2s 计时 */
+                    hbt.status_set_time = now;
+                } else {
+                    /* 无操作状态：清空计时 */
+                    hbt.status_set_time = 0;
+                }
+            } else if (hbt.status_set_time != 0 &&
+                       now - hbt.status_set_time >= 2000) {
+                /* 操作状态 2s 后自动清空 */
+                Bluetooth_SetStatus("");
+                hbt.status_set_time = 0;
+            }
+        }
 
         if (hbt.immediate_upload || now - last_bt_upload >= BT_PERIOD_MS) {
             hbt.immediate_upload = 0;
-            hbt.status_pending   = 0;
             last_bt_upload = now;
             Bluetooth_SendData();
         }
